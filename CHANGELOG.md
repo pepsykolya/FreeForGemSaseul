@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — 2026-10-22
+- Fix: a pool template refreshed under the same job id (new main block / job digest) is now picked up at once;
+  0.1.0 kept hashing the old template and could get "blockhash mismatch" rejects.
+
 ## 0.1.0 — 2026-10-22
 First release.
 - CUDA kernel for SASEUL resource-chain PoW: per-job midstate, rounds 0–6 precomputed, 256 nonces per thread.

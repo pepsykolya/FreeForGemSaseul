@@ -18,7 +18,7 @@ Fast CUDA miner for **SASEUL (SL)** — the resource-chain PoW of [saseul.com](h
 
 ## Quick start (Linux)
 
-    tar xzf ffgs-0.1.0-linux-x86_64.tar.gz && cd ffgs-0.1.0
+    tar xzf ffgs-0.1.1-linux-x86_64.tar.gz && cd ffgs-0.1.1
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet <your SASEUL address>.<worker>
 
 ## HiveOS quick start
@@ -27,7 +27,7 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 
 | Field | Value |
 |---|---|
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.1.0/ffgs-0.1.0.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.1.1/ffgs-0.1.1.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
 | Pool URL | `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931` |
@@ -39,6 +39,20 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 |---|---|---|---|
 | core locked 1560 MHz | **4.78 GH/s**, 108 W | 4.21 GH/s, 90 W (47 MH/W) | 4.21–4.26 GH/s, 92 W (46 MH/W) |
 | stock, power limit 135 W | **5.35 GH/s** | 5.02 GH/s | 4.99 GH/s |
+
+### Tuning sweep (RTX 3070, VF offset = undervolt at the locked clock, memory locked)
+
+| Kernel | Core | VF offset | Memory | GH/s | W | MH/W |
+|---|---|---|---|---|---|---|
+| default | stock (PL 135 W) | +225 | max | 5.38 | 135 | 39.9 |
+| default | 1700 | +150 | max | 5.21 | 122 | 42.6 |
+| default | 1560 | +225 | max | 4.79 | 98 | 48.6 |
+| default | 1560 | +225 | 810 | 4.70 | 90 | 52.1 |
+| **default** | **1400** | **+225** | **810** | **4.31** | **74** | **58.1** |
+| `--eco` | 1560 | +225 | 810 | 4.11 | 78 | 52.8 |
+| `--eco` | 1400 | +225 | 810 | 3.80 | 64 | 59.4 |
+
+No hardware errors in any of these settings. Memory clock does not matter for the hashrate — lock it low.
 
 The default kernel moves the integer additions of SHA-256 to the FMA pipe (the integer pipe is the bottleneck):
 +13% hashrate per clock for more power. `--eco` keeps the shortest instruction stream for the best H/W at low clocks.
