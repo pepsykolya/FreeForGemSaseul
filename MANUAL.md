@@ -17,8 +17,8 @@ The reward is 2000 "resource" per block, converted to SL by the `Refine` contrac
 
 ### 2. Wallet
 A SASEUL address is 44 hex characters (`5a00b883bd62…94ea`). Get one in the official **Guardee** wallet
-(Android / iOS) or with a SASEUL node (`saseul-script wallet create`). There is no seed phrase: the 32-byte private key
-*is* the wallet — back it up.
+(Android / iOS) — it creates the wallet from a **seed phrase**; write the phrase down and keep it offline. A SASEUL node
+(`saseul-script wallet create`) uses a raw 32-byte private key instead — back that key up. The miner needs only the address.
 
 ### 3. Running
 
@@ -74,7 +74,8 @@ already logged-in pool connection, so there is no reconnect gap. Shares of that 
 
 ### 2. Кошелёк
 Адрес SASEUL — 44 hex-символа (`5a00b883bd62…94ea`). Завести: официальный кошелёк **Guardee** (Android / iOS) или
-нода SASEUL (`saseul-script wallet create`). Сид-фразы нет: приватный ключ (32 байта) и есть кошелёк — сохраните его.
+нода SASEUL (`saseul-script wallet create`). Guardee создаёт кошелёк из **сид-фразы** — запишите её и храните офлайн;
+нода использует «сырой» приватный ключ (32 байта) — сохраните его. Майнеру нужен только адрес.
 
 ### 3. Запуск
 
@@ -128,7 +129,7 @@ SASEUL (SL) 有两条链：*主链*（交易、验证者）和 *资源链*——
 
 ### 2. 钱包
 SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用官方 **Guardee** 钱包（Android / iOS）或 SASEUL 节点
-（`saseul-script wallet create`）创建。没有助记词：32 字节私钥就是钱包本身，请妥善备份。
+（`saseul-script wallet create`）创建。Guardee 使用**助记词**创建钱包，请抄写并离线保存；节点使用 32 字节原始私钥，请妥善备份。挖矿只需要地址。
 
 ### 3. 运行
 
