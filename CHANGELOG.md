@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-10-22
+- **saseulmine.com pool support**: `--pool saseulmine` (= `https://pool.saseulmine.com`; any `https://` URL selects this
+  protocol, several URLs = failover). HTTPS with keep-alive (Linux: static mbedTLS + system CA bundle, Windows: WinHTTP),
+  requests signed with a per-rig Ed25519 client key (`ffgs-client.key` next to the binary), pool clock offset used for
+  signatures and block timestamps, job polling every second, shares sent by a separate thread (hashing never waits).
+  Shares that the pool would reject (stale round, below a just-raised vardiff difficulty) are dropped, not sent.
+- `--referrer ADDRESS|none` (saseulmine only). Default: the ffgs dev wallet. Per the pool, the referral 10% comes from
+  the pool's part and your share is unchanged with or without a referrer; `--referrer none` turns it off.
+- Dev fee on saseulmine goes to the dev wallet on saseulmine (a second signed session), rabbitminer users unchanged.
+- saseulmine has no worker names (its account page shows `default`); `.WORKER` / `--worker` are ignored there.
+- `--pool-test`: one signed saseulmine job request + account stats, no GPU needed.
+- Self-test also checks Ed25519 (RFC 8032), RIPEMD-160 and the SASEUL address derivation.
+- Windows package: `start-saseulmine.bat`.
+
 ## 0.2.0 — 2026-10-22
 - **Faster kernel: +8% hashrate per clock** (RTX 3070 at 1560 MHz: 5.16 GH/s, was 4.78). All round additions incl. K+W
   on the FMA pipe, a constant table for the inner nonce word, two independent hashes per loop iteration.
