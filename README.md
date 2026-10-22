@@ -3,7 +3,7 @@
 Fast CUDA miner for **SASEUL (SL)** — the resource-chain PoW of [saseul.com](https://saseul.com)
 (single SHA-256 over `previous_blockhash + header + nonce`).
 
-- Linux x86_64 and **HiveOS**; NVIDIA Pascal … Blackwell (GTX 10xx – RTX 50xx), driver 525+
+- Linux x86_64, **HiveOS** and **Windows x64**; NVIDIA Pascal … Blackwell (GTX 10xx – RTX 50xx), driver 525+
 - **Dev fee 1.0%** (60 s every 100 min, the first one after 15 min of mining)
 - Every share is re-checked on the CPU before it is sent; a self-test against a real mainnet block runs at every start
 
@@ -14,12 +14,18 @@ Fast CUDA miner for **SASEUL (SL)** — the resource-chain PoW of [saseul.com](h
 [Releases](https://github.com/pepsykolya/FreeForGemSaseul/releases):
 - `ffgs-<version>.tar.gz` — HiveOS custom miner package
 - `ffgs-<version>-linux-x86_64.tar.gz` — plain Linux
+- `ffgs-<version>-windows-x64.zip` — Windows
 - `SHA256SUMS`
 
 ## Quick start (Linux)
 
-    tar xzf ffgs-0.1.1-linux-x86_64.tar.gz && cd ffgs-0.1.1
+    tar xzf ffgs-0.2.0-linux-x86_64.tar.gz && cd ffgs-0.2.0
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet <your SASEUL address>.<worker>
+
+## Quick start (Windows)
+
+Unzip `ffgs-0.2.0-windows-x64.zip`, put your address into `start.bat` and run it (or
+`ffgs.exe --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet <address>.<worker>`). Only the NVIDIA driver is needed.
 
 ## HiveOS quick start
 
@@ -27,7 +33,7 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 
 | Field | Value |
 |---|---|
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.1.1/ffgs-0.1.1.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.2.0/ffgs-0.2.0.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
 | Pool URL | `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931` |
@@ -37,10 +43,10 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 
 | Card settings | **ffgs** | ffgs `--eco` | rabbitminer cuda-miner-12 |
 |---|---|---|---|
-| core locked 1560 MHz | **4.78 GH/s**, 108 W | 4.21 GH/s, 90 W (47 MH/W) | 4.21–4.26 GH/s, 92 W (46 MH/W) |
+| core locked 1560 MHz | **5.16 GH/s**, 113 W | 4.21 GH/s, 90 W (47 MH/W) | 4.21–4.26 GH/s, 92 W (46 MH/W) |
 | stock, power limit 135 W | **5.35 GH/s** | 5.02 GH/s | 4.99 GH/s |
 
-### Tuning sweep (RTX 3070, VF offset = undervolt at the locked clock, memory locked)
+### Tuning sweep (RTX 3070, kernel 0.1.1 — 0.2.0 is ~8% faster per clock; VF offset = undervolt at the locked clock)
 
 | Kernel | Core | VF offset | Memory | GH/s | W | MH/W |
 |---|---|---|---|---|---|---|

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 — 2026-10-22
+- **Faster kernel: +8% hashrate per clock** (RTX 3070 at 1560 MHz: 5.16 GH/s, was 4.78). All round additions incl. K+W
+  on the FMA pipe, a constant table for the inner nonce word, two independent hashes per loop iteration.
+- **Windows x64 build** (`ffgs-0.2.0-windows-x64.zip`): only the NVIDIA driver is needed; `start.bat` included.
+- Solo-mining support: `--pass` (pool password / proxy token), jobs may ask for a 40-hex nonce (`"nonce_len":40`), served by
+  a dedicated kernel with rounds 0–12 precomputed.
+- Pool messages are parsed with any JSON spacing.
+
 ## 0.1.1 — 2026-10-22
 - Fix: a pool template refreshed under the same job id (new main block / job digest) is now picked up at once;
   0.1.0 kept hashing the old template and could get "blockhash mismatch" rejects.

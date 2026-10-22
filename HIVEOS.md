@@ -11,7 +11,7 @@
 | Field | Value |
 |---|---|
 | Miner name | `ffgs` (filled in automatically from the URL) |
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.1.1/ffgs-0.1.1.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.2.0/ffgs-0.2.0.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
 | Pool URL | `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931` |

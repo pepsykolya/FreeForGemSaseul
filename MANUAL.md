@@ -28,6 +28,7 @@ A SASEUL address is 44 hex characters (`5a00b883bd62…94ea`). Get one in the of
 |---|---|
 | `--pool HOST:PORT[,HOST:PORT…]` | pool list; the next one is used when a pool is unreachable |
 | `--wallet ADDRESS[.WORKER]`, `--worker NAME` | payout address and worker name |
+| `--pass PASSWORD` | pool password (default `x`; the token of a solo proxy) |
 | `--devices 0,1,…` | GPUs to use, numbered as in `nvidia-smi` / HiveOS (default: all) |
 | `--eco` | efficiency kernel (see 5) |
 | `--blocks N`, `--threads N` | launch geometry (default: SM count × 64 blocks × 256 threads) |
@@ -85,6 +86,7 @@ already logged-in pool connection, so there is no reconnect gap. Shares of that 
 |---|---|
 | `--pool ХОСТ:ПОРТ[,ХОСТ:ПОРТ…]` | список пулов; при недоступности берётся следующий |
 | `--wallet АДРЕС[.ВОРКЕР]`, `--worker ИМЯ` | адрес выплат и имя воркера |
+| `--pass ПАРОЛЬ` | пароль пула (по умолчанию `x`; токен соло-прокси) |
 | `--devices 0,1,…` | какие GPU, нумерация как в `nvidia-smi` / HiveOS (по умолчанию все) |
 | `--eco` | экономичное ядро (см. 5) |
 | `--blocks N`, `--threads N` | геометрия запуска (по умолчанию SM × 64 блоков × 256 потоков) |
