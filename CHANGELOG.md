@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.4.0 — 2026-10-23
+- **saseulpool.com pool support** (the third SL pool): `--pool saseulpool` (= `nats://nats.saseulpool.com:4222`; any
+  `nats://HOST[:PORT]` selects this protocol, several = failover, the other servers of the pool's NATS cluster are
+  learned from the server). Native NATS client over plain TCP (no new libraries). Templates from the pool's nodes,
+  shares and blocks published the way the pool's own miner does, a heartbeat every 10 s with the rig's hashrate (shown
+  on the pool's site per worker; `--worker` / `.WORKER`, default the host name). The pool answers no single share:
+  ffgs counts a share as **delivered** when the server confirmed it (PING/PONG), and the table's `pool` line shows
+  what the pool credited from its API (PPLNS work of the address over 90 min → GH/s, share of the pool, next payout,
+  site hashrate). Dev fee on the same pool (second connection, dev wallet, same 1% schedule). `--pool-test` works for
+  saseulpool (connect, wait for a job). Windows `start-saseulpool.bat`; HiveOS: Pool URL `nats://nats.saseulpool.com:4222`.
+  Test (RTX 4070 Laptop, 26 min): 16 shares delivered, 16 credited by the pool (PPLNS work = 16 × share difficulty),
+  0 rejected / stale / dropped; dev fee test minute 4/4 credited.
+- **GPU clock control** (same model as FreeForGemPear): `--lock-cclock`, `--lock-mclock`, `--coffset` (alias
+  `--uv-offset`, core clock V/F offset = undervolt), `--moffset`, `--plimit`. One value for all GPUs or a comma list in
+  `--devices` order (empty / `-` / 0 = leave that GPU alone). NVML is loaded at run time (the miner still runs without it),
+  GPUs are matched by PCI bus id, only the mining GPUs are touched. Newer NVML calls (`nvmlDeviceSetClockOffsets`) with
+  a fallback to `nvmlDeviceSetGpcClkVfOffset` / `SetMemClkVfOffset`. Every value is logged with its read-back.
+  Restored on exit (Ctrl-C, SIGTERM/SIGHUP, console window closed, `--minutes`, fatal errors); after kill -9 / a crash
+  the per-GPU marker `ffgs-oc-<bus>.restore` makes the next start put everything back. Without root / Administrator:
+  one clear message, mining continues. `--oc-info` shows the current values (read only).
+- **Readable console**: colors (green accepted, yellow stale/dropped, red rejected/errors/hardware errors/connection
+  lost, cyan new block and difficulty changes, magenta block found, dim dev fee; only on an interactive console,
+  `--no-color`), one line per accepted share with the round trip, a table every 60 s (10 s and 5 min hashrate, power,
+  MH/W, clocks, temperature, fan %/rpm, offsets, what ffgs set, shares with percent) and the pool-side view of the
+  wallet every 5 min (saseulmine `/account`: hashrate 1h/24h, round shares and ratio, paid; rabbitminer.cc wallet API:
+  hashrate now/3h/24h, shares, pending, paid). Stale shares are counted apart from rejects.
+- The 10 s status line adds board power and MH/W per GPU and for the rig, in parentheses after the hashrate:
+  `hiveos/h-stats.sh` reads it unchanged.
+- `--log FILE` (plain text, 50 MB rotation to `FILE.old`), `--minutes N`.
+- Console output can no longer stall mining: lines go to the console through a writer thread (a Windows console
+  selection / QuickEdit pause or a stuck pipe reader used to block the pool threads), the `--log` file is written
+  directly. QuickEdit is switched off for the miner's console on Windows.
+- **Windows: no more GPU starvation in the background**: power throttling (EcoQoS) is turned off for ffgs and its GPU
+  threads, GPU threads run at above-normal priority, 1 ms timer; every GPU keeps two launches queued, so it never waits
+  for the host. RTX 4070 Laptop, window minimized, 6 min: 4.4–5.6 GH/s at 63–68 W, GPU 100% busy, ffgs CPU ~0.7% of one
+  core (0.3.0 on the same laptop dropped to ~0.8–1.8 GH/s at ~20 W).
+- saseulmine, several rigs on one address: the pool's vardiff is per address, so a share found just before another
+  rig raised it is refused (`Hash does not meet pool difficulty`). Now shown as `low-diff` (yellow, own counter, not a
+  reject), the job/difficulty is fetched again at once, a difficulty in any reply is applied immediately, queued shares
+  are re-checked before sending. A `Timestamp out of range` reject logs the share time vs the pool time.
+  A share answered while the pool switches blocks (HTTP 200, `"job":[]`) is counted as stale and the new job is
+  fetched at once.
+- `--quick-edit` keeps the Windows console QuickEdit mode (switched off by default).
+- Windows start scripts: `LOCK_CCLOCK`, `LOCK_MCLOCK`, `COFFSET`, `MOFFSET`, `PLIMIT`, `DEVICES`, `EXTRA`; with clock
+  settings they ask for Administrator (`AUTO_ELEVATE`); log in `logs\ffgs.log`.
+- **AMD GPUs (OpenCL)**: the same `ffgs` binary mines on AMD Radeon (RDNA2 tuned: RX 6800 XT 9.0 GH/s pool layout /
+  9.86 GH/s saseulmine layout at stock, 9.7 GH/s at 164 W with 2300 MHz / 881 mV). `--backend auto|cuda|amd`; auto =
+  CUDA if an NVIDIA GPU is present, else AMD. Windows: the Adrenalin driver's OpenCL; Linux: libOpenCL.so.1 (ROCm /
+  amdgpu-pro; untested). Integrated GPUs are skipped. The clock options and the power / temperature / fan columns are
+  NVIDIA only (with `--backend amd` the clock options are ignored with a warning).
+- `--bench` re-verifies every candidate on the CPU (stability check: hardware errors, candidate count vs expected).
+- HiveOS `h-stats.sh`: bus/temp/fan of AMD GPUs from HiveOS gpu-stats.
+- **Solo mining** documented and shipped in the source: `solo/sl_solo_proxy.py` (your SASEUL node's `run/mining_job`
+  / `run/mining_result` served to ffgs over the rabbitminer protocol, login token, rotation of payout addresses,
+  jobs only while the node is in sync, 40-hex nonce jobs), sample systemd unit, env and address list. MANUAL section 8.
+- **Solo dev fee**: with a solo proxy / own node (a `HOST:PORT` pool list without any rabbitminer.cc host) the 1% dev
+  fee minute is mined on saseulmine.com (HTTPS) for the dev wallet, not on the user's node; fallback rabbitminer.cc.
+  Same schedule; both fee connections stay open, the GPUs switch only to a ready fee job, and the fee window is a hard
+  60 s of wall time including connecting/fallback (neither fee pool ready = no fee in that window, logged). The fee
+  scheduler now runs every second (was every 10 s) for all pools.
+
 ## 0.3.0 — 2026-10-22
 - **saseulmine.com pool support**: `--pool saseulmine` (= `https://pool.saseulmine.com`; any `https://` URL selects this
   protocol, several URLs = failover). HTTPS with keep-alive (Linux: static mbedTLS + system CA bundle, Windows: WinHTTP),

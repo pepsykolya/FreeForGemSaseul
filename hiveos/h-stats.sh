@@ -18,9 +18,18 @@ else
   _up=$(grep -oP '\[\s*\K[0-9]+(?=s\])' <<< "$_line")
   _acc=$(grep -oP 'user sub [0-9]+ acc \K[0-9]+' <<< "$_line")
   _rej=$(grep -oP 'user sub [0-9]+ acc [0-9]+ rej \K[0-9]+' <<< "$_line")
-  mapfile -t _bus  < <(nvidia-smi --query-gpu=pci.bus --format=csv,noheader 2>/dev/null)
-  mapfile -t _temp < <(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
-  mapfile -t _fan  < <(nvidia-smi --query-gpu=fan.speed --format=csv,noheader,nounits 2>/dev/null)
+  if grep -q 'AMD OpenCL devices' <(tail -n 2000 "$_log" 2>/dev/null); then
+    # AMD backend: ffgs numbers the AMD GPUs in PCI bus order; HiveOS gpu-stats.json has bus/temp/fan of every GPU
+    _gs=${GPU_STATS_JSON:-/run/hive/gpu-stats.json}
+    _sel='[.brand, .busids, .temp, .fan] | transpose | map(select(.[0] == "amd")) | sort_by(.[1])'
+    mapfile -t _bus  < <(jq -r "$_sel | .[][1] | split(\":\")[0] | \"0x\" + ." "$_gs" 2>/dev/null)
+    mapfile -t _temp < <(jq -r "$_sel | .[][2]" "$_gs" 2>/dev/null)
+    mapfile -t _fan  < <(jq -r "$_sel | .[][3]" "$_gs" 2>/dev/null)
+  else
+    mapfile -t _bus  < <(nvidia-smi --query-gpu=pci.bus --format=csv,noheader 2>/dev/null)
+    mapfile -t _temp < <(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
+    mapfile -t _fan  < <(nvidia-smi --query-gpu=fan.speed --format=csv,noheader,nounits 2>/dev/null)
+  fi
   _hs=(); _b=(); _t=(); _f=()
   for i in "${!_ids[@]}"; do
     d=${_ids[$i]}

@@ -1,0 +1,5 @@
+# /etc/sl-solo/addresses.txt - payout addresses of found blocks, one SASEUL address (44 hex) per line, used in turn.
+# Lines that are not 44 hex characters (like these comments) are ignored. One address is enough; several addresses
+# spread the rewards (see MANUAL.md, "Solo mining"). Use addresses whose private keys YOU hold.
+YOUR_SASEUL_ADDRESS_1_44_HEX_CHARS__________
+YOUR_SASEUL_ADDRESS_2_44_HEX_CHARS__________

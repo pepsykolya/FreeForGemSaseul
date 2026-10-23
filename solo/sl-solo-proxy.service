@@ -1,0 +1,14 @@
+# /etc/systemd/system/sl-solo-proxy.service  -  systemctl daemon-reload && systemctl enable --now sl-solo-proxy
+[Unit]
+Description=SASEUL solo proxy for ffgs (node file IPC -> rabbitminer JSON-lines protocol)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/sl-solo/env
+ExecStart=/usr/bin/python3 /opt/sl-solo/sl_solo_proxy.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
