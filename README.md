@@ -14,7 +14,7 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
   ([details](MANUAL.md#6-dev-fee-and-the-saseulmine-referrer))
 - Every share is re-checked on the CPU before it is sent; a self-test against a real mainnet block runs at every start
 
-🎬 **Video tutorials (0.4.0):** [Russian](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-RU.mp4) · [English](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-EN.mp4) — the coin, Guardee wallet, pools, setup, undervolt and hashrates
+🎬 **Video tutorials (0.4.0):** [Russian, interview](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-RU.mp4) · [English](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-EN.mp4) — the coin, Guardee wallet, pools, setup, undervolt and hashrates
 
 📖 **Manual (EN / RU / 中文):** [MANUAL.md](MANUAL.md) · HiveOS: [HIVEOS.md](HIVEOS.md) · Changes: [CHANGELOG.md](CHANGELOG.md)
 
