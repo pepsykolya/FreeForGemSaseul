@@ -1,12 +1,17 @@
 @echo off
-rem FreeForGemSaseul (ffgs) - SASEUL (SL) GPU miner on rabbitminer.cc.
+rem FreeForGemSaseul (ffgs) - SASEUL (SL) GPU miner on Kavatar SL Pool (https://kavatar.kasplay.online):
+rem PPLNS, 2% pool fee, payouts every 6 h from 10 SL.
 rem Put your SASEUL address (44 hex chars) and a worker name below, save, double-click this file.
 cd /d "%~dp0"
 set WALLET=YOUR_SASEUL_ADDRESS
 set WORKER=rig1
-set POOL=nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931
+set POOL=sl.kasplay.online:3333
 rem GPUs to use, numbered as in nvidia-smi (empty = all), e.g. 0,1
 set DEVICES=
+rem Fee 2% = 1% ffgs dev + 1% referral. REFERRER = the SASEUL address of who recommended ffgs to you:
+rem they get the 1% referral minute. Put your own wallet here to pay only 1% in total.
+rem Empty = the referral minute goes to the ffgs dev.
+set REFERRER=
 
 rem ---- Optional GPU clock control (empty = leave as is). Needs Administrator (see AUTO_ELEVATE below).
 rem One value for all GPUs, or a comma list in DEVICES order (empty entry or 0 = leave that GPU alone),
@@ -28,6 +33,7 @@ rem Extra arguments, e.g. --eco
 set EXTRA=
 
 set ARGS=--pool %POOL% --wallet %WALLET% --worker %WORKER%
+if not "%REFERRER%"=="" set ARGS=%ARGS% --referrer %REFERRER%
 if not "%DEVICES%"=="" set ARGS=%ARGS% --devices %DEVICES%
 if not "%LOCK_CCLOCK%"=="" set ARGS=%ARGS% --lock-cclock %LOCK_CCLOCK%
 if not "%LOCK_MCLOCK%"=="" set ARGS=%ARGS% --lock-mclock %LOCK_MCLOCK%

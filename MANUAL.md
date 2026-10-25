@@ -22,17 +22,19 @@ A SASEUL address is 44 hex characters (`5a00b883bd62…94ea`). Get one in the of
 
 ### 3. Running
 
+    ./ffgs --wallet ADDRESS.WORKER                      # Kavatar SL Pool (default, = --pool kavatar), see 3b
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet ADDRESS.WORKER
     ./ffgs --pool saseulmine --wallet ADDRESS.WORKER
     ./ffgs --pool saseulpool --wallet ADDRESS.WORKER
 
 | Option | Meaning |
 |---|---|
-| `--pool HOST:PORT[,HOST:PORT…]` | rabbitminer pool list; the next one is used when a pool is unreachable |
+| `--pool HOST:PORT[,HOST:PORT…]` | rabbitminer-protocol pool list (Kavatar SL Pool, rabbitminer.cc, own node); the next one is used when a pool is unreachable; default `sl.kasplay.online:3333` |
+| `--pool kavatar` | Kavatar SL Pool (`sl.kasplay.online:3333`), see 3b |
 | `--pool saseulmine` | saseulmine.com; the same as `--pool https://pool.saseulmine.com` (any `https://` URL selects this protocol, several URLs = failover list; do not mix with `HOST:PORT` entries) |
 | `--pool saseulpool` | saseulpool.com; the same as `--pool nats://nats.saseulpool.com:4222` (any `nats://HOST[:PORT]` selects this protocol, several = failover list; the other servers of the pool's cluster are learned from the server and used too; see 6b) |
 | `--wallet ADDRESS[.WORKER]`, `--worker NAME` | payout address and worker name (saseulpool: default worker = the host name) |
-| `--referrer ADDRESS` / `--referrer none` | saseulmine only: referrer address sent with your shares; default: the ffgs dev wallet (see 6) |
+| `--referrer ADDRESS` / `--referrer none` | who gets the 1% referral minute (whoever recommended ffgs to you); **your own wallet = total fee 1%**; none / not set = the dev gets it; also sent as the saseulmine referrer (see 6) |
 | `--pass PASSWORD` | pool password (default `x`; the token of a solo proxy) |
 | `--devices 0,1,…` | GPUs to use, numbered as in `nvidia-smi` / HiveOS (default: all; AMD: see 5b) |
 | `--backend auto\|cuda\|amd` | GPU backend: `auto` (default) = NVIDIA CUDA if an NVIDIA GPU is present, else AMD OpenCL |
@@ -47,8 +49,9 @@ A SASEUL address is 44 hex characters (`5a00b883bd62…94ea`). Get one in the of
 | `--moffset MHz[,MHz…]` | memory clock offset, may be negative (NVIDIA driver 555+) |
 | `--plimit W[,W…]` | power limit |
 | `--oc-info` | clocks, offsets and power limits of the selected GPUs, then exit (no root needed) |
-| `--log FILE` | also append the log to FILE (plain text; the Windows start scripts use `logs\ffgs.log`) |
-| `--no-color` | no console colors (they are off anyway when the output is a file or a pipe) |
+| `--log FILE` | also append the log to FILE (plain text unless `--color always`; the Windows start scripts use `logs\ffgs.log`) |
+| `--color auto\|always\|never` | console colors, see 3a (default `auto`) |
+| `--no-color` | = `--color never` |
 | `--minutes N` | stop after N minutes of mining (tests) |
 | `--quick-edit` | Windows: keep the console's QuickEdit mode (ffgs switches it off: a click into the window would pause the output) |
 
@@ -66,11 +69,53 @@ every 5 min):
       shares  accepted 2 (100.0%)  stale 0 (0.0%)  low-diff 0 (0.0%)  rejected 0 (0.0%)  dropped 0  blocks 0  round trip 330 ms  | dev fee acc 0/0
       pool    saseulmine: hashrate 1h 9.01 GH/s, 24h 0.73 GH/s | round shares 823 (0.364% of the pool) | paid 0 (0 payouts) (0 min ago)
 
-Colors on an interactive console: green = accepted share / connected, yellow = stale or dropped share, red = rejected
-share, errors, hardware errors, connection lost, cyan = new block height and difficulty changes, bold magenta = block
-found, dim = dev fee minute. Log files (`--log`), pipes, HiveOS and systemd logs get plain text (no escape codes);
-`--no-color` or `NO_COLOR=1` turns colors off on the console too. Power, temperature and fans come from NVML (read
-only, no root needed); without NVML they show `-`.
+Power, temperature and fans come from NVML (read only, no root needed); without NVML they show `-`. Colors: see 3a.
+
+### 3a. Console colors (new in 0.5.0)
+One meaning per color, the same in the log lines, the 10 s status line and the 60 s table:
+
+| Message / value | Color |
+|---|---|
+| **block found** (`*** BLOCK FOUND ***`, `blocks N` in the table when N > 0) | bold bright white on magenta (the loudest style, used for nothing else) |
+| accepted / delivered share, connected, `online`, self-test / pool test `ok` | green |
+| hashrate values: `GPUn 4.611` and `total … GH/s` in the status line, the GH/s columns of the table, `--bench` | bold bright white |
+| energy efficiency `MH/W` (status line and table) | bold bright blue |
+| GPU temperature (table) | green below 70 °C, yellow 70–79 °C, red from 80 °C |
+| totals: the `rig` row, the table title | bold |
+| stale / dropped / low-diff share, waiting for a job, switching server, pool stats not updated | yellow |
+| rejected share, errors, hardware errors, connection lost, `OFFLINE` / `pool offline` | red |
+| new block height, share difficulty / divisor changes | cyan |
+| dev fee minute (its share lines and status lines) | dim |
+| timestamps, the table's column titles | gray |
+
+When colors are used (`--color`, default `auto`):
+- `auto`: on a terminal; and on a pipe that is watched from a terminal (stdin is a terminal or the miner runs inside
+  GNU screen), e.g. `./ffgs … | tee ffgs.log`. Never for a file redirect, a service (systemd: stdin is `/dev/null`) or
+  the `--log` file. `NO_COLOR` (non-empty) turns `auto` off, `FORCE_COLOR` (non-empty, not `0`) turns it into `always`.
+- `always`: escape codes on every output, the `--log` file included. `never` (or `--no-color`): plain text everywhere.
+- **HiveOS**: `h-run.sh` runs `ffgs … | tee ffgs.log` inside the `miner` screen, so `auto` colors it: `miner` and the
+  web "miner log" view (it shows the ANSI colors of `/var/log/miner/ffgs/ffgs.log`) are colored. `h-stats.sh` reads
+  the colored log unchanged (colors sit only around whole tokens). Extra config `--color never` gives a plain log,
+  `--color always` forces colors should a HiveOS version start the miner without a terminal.
+- **Windows**: the Windows 10+ console (ANSI / VT mode, switched on by ffgs); an older console gets plain text.
+  Redirected output (`> file`, `| Tee-Object`) is plain unless `--color always`; `logs\ffgs.log` stays plain.
+- A terminal with a light background: bright white may be hard to read there, use `--color never`.
+
+### 3b. Kavatar SL Pool (default since 0.5.0)
+
+ffgs mines on **Kavatar SL Pool**, the pool of the ffgs authors, when `--pool` is not given (`--pool kavatar` is the
+same): `sl.kasplay.online:3333`, statistics and wallet lookup at **https://kavatar.kasplay.online** (EN / RU / 中文).
+
+- **PPLNS**: a block is shared by the shares of the last 2 network difficulties of work before it, weighted by their
+  difficulty — steady miners are not hurt by pool hoppers. **Pool fee 2%.**
+- **Automatic payouts every 6 hours from 10 SL**, straight to your address. A payout counts as paid only when the
+  transaction is in the chain; one that does not get in within 30 min goes back to your balance.
+- The pool runs its own SASEUL node; its reward (resource) is refined to SL and credited when all 9 reward windows of
+  the block are confirmed (~15 min after the block). Credits, payouts and blocks are listed on the site.
+- Variable share difficulty per connection (about one share every 15 s), 40-hex nonces, no password; the worker name is
+  the part after the dot of `--wallet ADDRESS.WORKER` (or `--worker`).
+- The console's `pool` line shows the pool's view of your wallet: 10-min hashrate, balance, paid, immature blocks.
+- The dev fee minute is mined on the same pool for the ffgs dev wallet (no second connection to another pool).
 
 ### 4. HiveOS
 See [HIVEOS.md](HIVEOS.md).
@@ -114,7 +159,7 @@ ffgs can set the clocks of the GPUs it mines on, the same way as FreeForGemPear:
   `start-saseulpool.bat`.
   With any of them set, the script asks Windows to reopen itself as Administrator (`AUTO_ELEVATE=1`, the default).
 
-**RTX 3070, measured:** `--lock-cclock 1400 --lock-mclock 810 --coffset 225` → about **4.6 GH/s at 73–75 W (~62 MH/W)**;
+**RTX 3070, measured (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5.05 GH/s at 74 W (68 MH/W)** on 40-hex pools (Kavatar, saseulmine, solo), 4.65 GH/s on 16-hex pools;
 `--lock-cclock 1560` gives ~5.1 GH/s at ~110 W. See the README tuning table.
 
 ### 5b. AMD GPUs (new in 0.4.0)
@@ -129,26 +174,28 @@ The same `ffgs` / `ffgs.exe` also mines on AMD Radeon GPUs through OpenCL (tuned
 - The clock options of 5a and the power / clock / temperature / fan columns are **NVIDIA only**; with the AMD backend
   the clock options are ignored (one warning) — set AMD clocks and voltage in Adrenalin / HiveOS OC.
 - `--bench` re-checks every candidate on the CPU and prints the hardware-error count: use it to verify an undervolt.
+- Developer notes and measurements: `docs/amd.md` in the source repository.
 
-### 6. Dev fee and the saseulmine referrer
-1.0%: 60 seconds every 100 minutes (first one after 15 minutes) the miner submits to the dev wallet on a second,
-already logged-in pool connection of the same pool (rabbitminer, saseulmine or saseulpool), so there is no reconnect gap.
-Shares of that minute are shown as `fee …` in the status line.
+### 6. Dev fee and referral: 2% = 1% dev + 1% referral
+The fee is **2%: two separate 60-second windows in every 100 minutes** (the first one after 15 minutes of mining):
 
-**Solo** (a `HOST:PORT` pool list without any rabbitminer.cc host = a solo proxy / your own node, see 8): the fee
-minute is mined on **saseulmine.com** (HTTPS) for the dev wallet instead of on your node — on your own node it would
-only pay your own addresses. Same schedule (60 s every 100 min, the first after 15 min). If saseulmine.com cannot
-be reached, the fee minute goes to rabbitminer.cc (`nl`/`fi.rabbitminer.cc:1931`) instead (`dev fee: … not reachable,
-using fee-rabbitminer`). Both fee connections are kept open all the time, the GPUs switch only to a ready fee job and
-keep hashing for you while a fee pool connects, and the fee window is a hard **60 s of wall time** including any
-connecting or fallback: if neither fee pool is ready within it, the fee is skipped for that window (`dev fee: no fee
-pool reachable, mining for your wallet …`).
+- **1% referral** — mined for the wallet given with **`--referrer ADDRESS`** (whoever recommended ffgs to you), on your
+  own pool. Without `--referrer` (or with `--referrer none`) the referral minute goes to the ffgs dev. Solo / own node:
+  the referral minute is mined on Kavatar SL Pool (your node would not pay that address).
+- **1% ffgs dev** — for the ffgs dev wallet (`a750e196…a624`) on your own pool (solo / own node: saseulmine.com, then
+  rabbitminer.cc).
+- **Your own wallet as referrer = total fee 1%**: there is no referral switch at all, and the remaining dev minute is
+  mined on **Kavatar SL Pool** (`sl.kasplay.online:3333`, the pool of the ffgs authors); if Kavatar cannot be reached,
+  on your own pool. If you mine on Kavatar anyway, nothing switches pools at all.
+- Both fee connections are opened in advance and kept open, the GPUs switch only to a ready fee job and keep hashing
+  for you while a fee pool connects, and each window is a hard **60 s of wall time**: if no fee pool is ready in it, that
+  window is skipped. The start-up log names the referrer; the status line counts the dev (`fee …`) and referral
+  (`ref …`) shares separately.
+- Windows: `REFERRER=` in the start `.bat`; HiveOS: `--referrer ADDRESS` in *Extra config arguments*.
 
-**Referrer (saseulmine only).** saseulmine.com splits a found block 80% to miners, 10% to referrers and 10% to the pool,
-and states on its site: *"No referrer? Your share is unchanged."* — i.e. the referral 10% is taken from the pool's part,
-not from yours. By default ffgs sends the ffgs dev wallet (`a750e196…a624`) as your referrer; this does not change what
-you are paid (according to the pool — we cannot audit its accounting). To send no referrer use `--referrer none`, to
-credit someone else use `--referrer ADDRESS`. The referrer is printed at start.
+**saseulmine referrer.** saseulmine.com itself also has referrers: it splits a block 80% miners / 10% referrers / 10%
+pool and states *"No referrer? Your share is unchanged."* — the referral 10% comes from the pool's part. ffgs sends your
+`--referrer` address there as well (default: the ffgs dev wallet; `--referrer none` sends none).
 
 ### 6a. saseulmine.com details
 - HTTPS (`pool.saseulmine.com:443`); every request is signed with an Ed25519 *client key*. ffgs creates it once and keeps
@@ -301,17 +348,19 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 
 ### 3. Запуск
 
+    ./ffgs --wallet АДРЕС.ВОРКЕР                        # Kavatar SL Pool (по умолчанию, = --pool kavatar), см. 3b
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet АДРЕС.ВОРКЕР
     ./ffgs --pool saseulmine --wallet АДРЕС.ВОРКЕР
     ./ffgs --pool saseulpool --wallet АДРЕС.ВОРКЕР
 
 | Опция | Что делает |
 |---|---|
-| `--pool ХОСТ:ПОРТ[,ХОСТ:ПОРТ…]` | список пулов rabbitminer; при недоступности берётся следующий |
+| `--pool ХОСТ:ПОРТ[,ХОСТ:ПОРТ…]` | список пулов с протоколом rabbitminer (Kavatar SL Pool, rabbitminer.cc, своя нода); при недоступности берётся следующий; по умолчанию `sl.kasplay.online:3333` |
+| `--pool kavatar` | Kavatar SL Pool (`sl.kasplay.online:3333`), см. 3b |
 | `--pool saseulmine` | saseulmine.com; то же, что `--pool https://pool.saseulmine.com` (любой `https://` URL — этот протокол, несколько URL — резервные; не смешивать с `ХОСТ:ПОРТ`) |
 | `--pool saseulpool` | saseulpool.com; то же, что `--pool nats://nats.saseulpool.com:4222` (любой `nats://ХОСТ[:ПОРТ]` — этот протокол, несколько — резервный список; остальные серверы кластера пула ffgs узнаёт от сервера и тоже использует; см. 6b) |
 | `--wallet АДРЕС[.ВОРКЕР]`, `--worker ИМЯ` | адрес выплат и имя воркера (saseulpool: по умолчанию воркер = имя компьютера) |
-| `--referrer АДРЕС` / `--referrer none` | только saseulmine: адрес реферера, который уходит вместе с шарами; по умолчанию — кошелёк разработчика ffgs (см. 6) |
+| `--referrer АДРЕС` / `--referrer none` | кому идёт реферальная минута 1% (тому, кто посоветовал вам ffgs); **свой кошелёк = комиссия 1%**; none / не задан — её получает разработчик; заодно это реферер saseulmine (см. 6) |
 | `--pass ПАРОЛЬ` | пароль пула (по умолчанию `x`; токен соло-прокси) |
 | `--devices 0,1,…` | какие GPU, нумерация как в `nvidia-smi` / HiveOS (по умолчанию все; AMD — см. 5b) |
 | `--backend auto\|cuda\|amd` | GPU-бэкенд: `auto` (по умолчанию) = NVIDIA CUDA, если есть карта NVIDIA, иначе AMD OpenCL |
@@ -326,8 +375,9 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 | `--moffset МГц[,МГц…]` | оффсет частоты памяти, может быть отрицательным (драйвер 555+) |
 | `--plimit Вт[,Вт…]` | лимит мощности |
 | `--oc-info` | частоты, оффсеты и лимиты мощности выбранных GPU, затем выход (root не нужен) |
-| `--log ФАЙЛ` | дополнительно писать лог в ФАЙЛ (обычный текст; bat-файлы Windows пишут в `logs\ffgs.log`) |
-| `--no-color` | без цветов в консоли (в файл и в pipe цвета не идут никогда) |
+| `--log ФАЙЛ` | дополнительно писать лог в ФАЙЛ (обычный текст, если не `--color always`; bat-файлы Windows пишут в `logs\ffgs.log`) |
+| `--color auto\|always\|never` | цвета в консоли, см. 3a (по умолчанию `auto`) |
+| `--no-color` | = `--color never` |
 | `--minutes N` | остановиться через N минут майнинга (для тестов) |
 | `--quick-edit` | Windows: не выключать QuickEdit консоли (ffgs его выключает: клик в окно ставит вывод на паузу) |
 
@@ -336,11 +386,53 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 температура, вентилятор, текущие оффсеты ядра/памяти, что выставил ffgs, шары с процентами и данные самого пула по вашему
 кошельку (saseulmine `/account`, API кошелька rabbitminer.cc, API saseulpool.com; обновляются раз в 5 мин) — пример в английском разделе.
 
-Цвета в интерактивной консоли: зелёный — принятая шара / подключение, жёлтый — stale или отброшенная шара, красный —
-отклонённая шара, ошибки, hardware error, потеря связи, голубой — новая высота блока и смена сложности, жирный пурпурный —
-найден блок, тусклый — минута комиссии. В файл (`--log`), pipe, лог HiveOS и systemd идёт обычный текст без escape-кодов;
-`--no-color` или `NO_COLOR=1` выключает цвета и в консоли. Мощность, температура и вентиляторы — из NVML (только чтение,
-root не нужен); без NVML — `-`.
+Мощность, температура и вентиляторы — из NVML (только чтение, root не нужен); без NVML — `-`. Цвета — см. 3a.
+
+### 3a. Цвета консоли (новое в 0.5.0)
+У каждого цвета одно значение — одинаково в строках лога, в строке статуса раз в 10 с и в таблице раз в 60 с:
+
+| Сообщение / значение | Цвет |
+|---|---|
+| **найден блок** (`*** BLOCK FOUND ***`, `blocks N` в таблице при N > 0) | жирный ярко-белый на пурпурном фоне (самый заметный стиль, больше нигде) |
+| принятая / доставленная шара, подключение, `online`, `ok` самотеста / теста пула | зелёный |
+| хешрейт: `GPUn 4.611` и `total … GH/s` в строке статуса, колонки GH/s таблицы, `--bench` | жирный ярко-белый |
+| энергоэффективность `MH/W` (строка статуса и таблица) | жирный ярко-синий |
+| температура GPU (таблица) | зелёный ниже 70 °C, жёлтый 70–79 °C, красный от 80 °C |
+| итоги: строка `rig`, заголовок таблицы | жирный |
+| stale / отброшенная / low-diff шара, ожидание задания, смена сервера, статистика пула не обновилась | жёлтый |
+| отклонённая шара, ошибки, hardware error, потеря связи, `OFFLINE` / `pool offline` | красный |
+| новая высота блока, смена сложности / делителя шары | голубой |
+| минута комиссии (её шары и строки статуса) | тусклый |
+| время, названия колонок таблицы | серый |
+
+Когда цвета включены (`--color`, по умолчанию `auto`):
+- `auto`: в терминале; и в pipe, за которым смотрят из терминала (stdin — терминал или майнер запущен внутри GNU
+  screen), например `./ffgs … | tee ffgs.log`. Никогда — при перенаправлении в файл, под сервисом (systemd: stdin —
+  `/dev/null`) и в файле `--log`. `NO_COLOR` (непустой) выключает `auto`, `FORCE_COLOR` (непустой, не `0`) делает его `always`.
+- `always`: escape-коды везде, включая файл `--log`. `never` (или `--no-color`): везде обычный текст.
+- **HiveOS**: `h-run.sh` запускает `ffgs … | tee ffgs.log` внутри screen `miner`, `auto` его раскрашивает: цветные и
+  `miner`, и веб-просмотр «miner log» (он показывает ANSI-цвета из `/var/log/miner/ffgs/ffgs.log`). `h-stats.sh` читает
+  цветной лог как раньше (цвета стоят только вокруг целых значений). В Extra config `--color never` — лог без цветов,
+  `--color always` — цвета принудительно, если какая-то версия HiveOS запустит майнер без терминала.
+- **Windows**: консоль Windows 10+ (режим ANSI / VT, ffgs его включает); старая консоль — обычный текст.
+  Перенаправленный вывод (`> file`, `| Tee-Object`) — без цветов, если не `--color always`; `logs\ffgs.log` — без цветов.
+- Терминал со светлым фоном: ярко-белый там плохо читается — `--color never`.
+
+### 3b. Пул Kavatar SL (по умолчанию с 0.5.0)
+
+Без `--pool` ffgs майнит на **Kavatar SL Pool**, пуле авторов ffgs (`--pool kavatar` — то же самое):
+`sl.kasplay.online:3333`, статистика и поиск по кошельку — **https://kavatar.kasplay.online** (EN / RU / 中文).
+
+- **PPLNS**: блок делится по шарам за последние 2 сложности сети работы до него, с весом по сложности шары —
+  постоянные майнеры не страдают от «прыгунов» между пулами. **Комиссия пула 2%.**
+- **Автоматические выплаты каждые 6 часов от 10 SL** прямо на ваш адрес. Выплата считается сделанной, только когда
+  транзакция попала в цепочку; не попавшая за 30 минут возвращается на баланс.
+- У пула своя нода SASEUL; награда (resource) переводится в SL и начисляется, когда подтверждены все 9 окон награды
+  блока (~15 минут после блока). Начисления, выплаты и блоки видны на сайте.
+- Сложность шары подбирается под каждое подключение (примерно шара раз в 15 с), nonce 40 hex, пароль не нужен; имя
+  воркера — часть после точки в `--wallet АДРЕС.ВОРКЕР` (или `--worker`).
+- Строка `pool` в консоли показывает данные пула по вашему кошельку: хэшрейт за 10 мин, баланс, выплачено, несозревшие блоки.
+- Минута комиссии разработчика майнится на том же пуле на dev-кошелёк ffgs (без второго подключения к другому пулу).
 
 ### 4. HiveOS
 См. [HIVEOS.md](HIVEOS.md).
@@ -384,7 +476,7 @@ ffgs умеет выставлять частоты карт, на которы�
   `start-saseulpool.bat`.
   Если задана хоть одна, скрипт просит Windows перезапустить его от администратора (`AUTO_ELEVATE=1` по умолчанию).
 
-**RTX 3070, замер:** `--lock-cclock 1400 --lock-mclock 810 --coffset 225` → около **4.6 GH/s при 73–75 Вт (~62 MH/W)**;
+**RTX 3070, замер (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5,05 GH/s при 74 Вт (68 MH/W)** на пулах с 40 hex (Kavatar, saseulmine, соло), 4,65 GH/s на пулах с 16 hex;
 `--lock-cclock 1560` — ~5.1 GH/s при ~110 Вт. Подробнее — таблица в README.
 
 ### 5b. Видеокарты AMD (новое в 0.4.0)
@@ -399,26 +491,28 @@ ffgs умеет выставлять частоты карт, на которы�
 - Опции частот из 5a и столбцы мощности / частот / температуры / вентилятора — **только NVIDIA**; с бэкендом AMD опции
   частот игнорируются (одно предупреждение) — частоты и напряжение AMD задавайте в Adrenalin / OC HiveOS.
 - `--bench` перепроверяет на CPU каждого кандидата и печатает число аппаратных ошибок — так проверяется андервольт.
+- Заметки разработчика и замеры: `docs/amd.md` в репозитории исходников.
 
-### 6. Комиссия разработчика и реферер saseulmine
-1.0%: 60 секунд из каждых 100 минут (первый раз через 15 минут) майнер отправляет шары на кошелёк разработчика
-по второму, заранее авторизованному соединению с тем же пулом (rabbitminer, saseulmine или saseulpool) — без переподключений.
-Эти шары видны как `fee …` в строке статуса.
+### 6. Комиссия разработчика и реферал: 2% = 1% разработчику + 1% рефереру
+Комиссия — **2%: два отдельных окна по 60 секунд в каждые 100 минут** (первое — через 15 минут майнинга):
 
-**Соло** (список пулов `ХОСТ:ПОРТ` без хоста rabbitminer.cc = соло-прокси / своя нода, см. 8): минута комиссии
-майнится на **saseulmine.com** (HTTPS) на кошелёк разработчика, а не на вашу ноду — на своей ноде она платила бы
-только вашим же адресам. Расписание то же (60 с каждые 100 мин, первая через 15 мин). Если saseulmine.com
-недоступен, минута комиссии идёт на rabbitminer.cc (`nl`/`fi.rabbitminer.cc:1931`) (`dev fee: … not reachable, using
-fee-rabbitminer`). Оба соединения комиссии держатся открытыми постоянно, GPU переключаются только на готовое задание
-комиссии и, пока пул комиссии подключается, считают на вас; окно комиссии — жёстко **60 с реального времени**, включая
-подключение и запасной пул: если ни один пул комиссии не готов, комиссия в этом окне пропускается (`dev fee: no fee
-pool reachable, mining for your wallet …`).
+- **1% рефереру** — майнится на кошелёк из **`--referrer АДРЕС`** (того, кто посоветовал вам ffgs), на вашем же пуле.
+  Без `--referrer` (или с `--referrer none`) реферальная минута идёт разработчику. Соло / своя нода: реферальная минута
+  майнится на Kavatar SL Pool (ваша нода этому адресу не заплатит).
+- **1% разработчику ffgs** — на кошелёк разработчика (`a750e196…a624`) на вашем же пуле (соло / своя нода:
+  saseulmine.com, затем rabbitminer.cc).
+- **Свой кошелёк рефером = комиссия 1%**: переключения на реферала нет вовсе, а оставшаяся минута разработчика майнится
+  на **Kavatar SL Pool** (`sl.kasplay.online:3333`, пул авторов ffgs); если Kavatar недоступен — на вашем пуле. Если вы и
+  так майните на Kavatar, пул вообще не меняется.
+- Оба соединения комиссии открываются заранее и держатся постоянно, GPU переключаются только на готовое задание и, пока
+  пул комиссии подключается, считают на вас; каждое окно — жёстко **60 с реального времени**: если пул комиссии не готов,
+  окно пропускается. Реферер печатается в логе при старте; в строке статуса шары разработчика (`fee …`) и реферала
+  (`ref …`) считаются отдельно.
+- Windows: `REFERRER=` в стартовом `.bat`; HiveOS: `--referrer АДРЕС` в *Extra config arguments*.
 
-**Реферер (только saseulmine).** saseulmine.com делит найденный блок так: 80% майнерам, 10% реферерам, 10% пулу, и пишет
-на своём сайте: *«No referrer? Your share is unchanged»* — «нет реферера — ваша доля та же», т.е. реферальные 10% идут
-из части пула, а не из вашей. По умолчанию ffgs указывает реферером кошелёк разработчика ffgs (`a750e196…a624`); на ваши
-выплаты это не влияет (по словам пула — проверить его учёт мы не можем). Без реферера: `--referrer none`, другой
-реферер: `--referrer АДРЕС`. Реферер печатается в логе при старте.
+**Реферер saseulmine.** У самого saseulmine.com тоже есть рефереры: блок делится 80% майнерам / 10% реферерам / 10% пулу,
+и пул пишет *«No referrer? Your share is unchanged»* — реферальные 10% идут из части пула. ffgs отправляет туда ваш
+`--referrer` (по умолчанию — кошелёк разработчика; `--referrer none` — без реферера).
 
 ### 6a. Особенности saseulmine.com
 - HTTPS (`pool.saseulmine.com:443`); каждый запрос подписан Ed25519-*ключом клиента*. ffgs создаёт его один раз и хранит
@@ -566,17 +660,19 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 
 ### 3. 运行
 
+    ./ffgs --wallet 地址.矿工名                          # Kavatar SL Pool（默认，= --pool kavatar），见 3b
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet 地址.矿工名
     ./ffgs --pool saseulmine --wallet 地址.矿工名
     ./ffgs --pool saseulpool --wallet 地址.矿工名
 
 | 参数 | 说明 |
 |---|---|
-| `--pool 主机:端口[,主机:端口…]` | rabbitminer 矿池列表，不可用时自动切换到下一个 |
+| `--pool 主机:端口[,主机:端口…]` | rabbitminer 协议矿池列表（Kavatar SL Pool、rabbitminer.cc、自建节点），不可用时自动切换到下一个；默认 `sl.kasplay.online:3333` |
+| `--pool kavatar` | Kavatar SL Pool（`sl.kasplay.online:3333`），见 3b |
 | `--pool saseulmine` | saseulmine.com，等同于 `--pool https://pool.saseulmine.com`（任何 `https://` 地址都使用该协议，多个地址为备用列表；不要与 `主机:端口` 混用） |
 | `--pool saseulpool` | saseulpool.com，等同于 `--pool nats://nats.saseulpool.com:4222`（任何 `nats://主机[:端口]` 都使用该协议，多个地址为备用列表；矿池集群的其他服务器由服务器告知并自动使用；见第 6b 节） |
 | `--wallet 地址[.矿工名]`、`--worker 名称` | 收款地址和矿工名（saseulpool：默认矿工名为主机名） |
-| `--referrer 地址` / `--referrer none` | 仅 saseulmine：随份额发送的推荐人地址；默认为 ffgs 开发者钱包（见第 6 节） |
+| `--referrer 地址` / `--referrer none` | 1% 推荐分钟的接收者（向您推荐 ffgs 的人）；**填写自己的钱包 = 总费用 1%**；none / 未设置 = 归开发者；同时作为 saseulmine 推荐人发送（见第 6 节） |
 | `--devices 0,1,…` | 使用的 GPU，编号与 `nvidia-smi` / HiveOS 一致（默认全部；AMD 见 5b） |
 | `--backend auto\|cuda\|amd` | GPU 后端：`auto`（默认）= 有 NVIDIA 显卡时用 CUDA，否则用 AMD OpenCL |
 | `--eco` | 节能内核（见第 5 节） |
@@ -589,16 +685,56 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 | `--moffset MHz[,MHz…]` | 显存频率偏移，可为负（驱动 555+） |
 | `--plimit W[,W…]` | 功耗上限 |
 | `--oc-info` | 显示所选 GPU 的频率、偏移和功耗上限后退出（无需 root） |
-| `--log 文件` | 同时把日志追加写入文件（纯文本；Windows 启动脚本写入 `logs\ffgs.log`） |
-| `--no-color` | 控制台不使用颜色（输出到文件或管道时本来就不带颜色） |
+| `--log 文件` | 同时把日志追加写入文件（纯文本，除非 `--color always`；Windows 启动脚本写入 `logs\ffgs.log`） |
+| `--color auto\|always\|never` | 控制台颜色，见第 3a 节（默认 `auto`） |
+| `--no-color` | 等同 `--color never` |
 | `--minutes N` | 挖矿 N 分钟后退出（测试用） |
 | `--quick-edit` | Windows：保留控制台的快速编辑模式（ffgs 默认关闭它：在窗口中点击会暂停输出） |
 
 **控制台。** 每 10 秒输出一行状态（每张显卡的算力、功耗与能效、整机合计、您的钱包和开发者费用的份额；HiveOS 读取这一行），
 每 60 秒输出一张表：10 秒与 5 分钟算力、功耗、MH/W、频率、温度、风扇、当前核心/显存偏移、ffgs 设置的值、份额及百分比，以及矿池
-对您钱包的统计（saseulmine `/account`、rabbitminer.cc 钱包 API、saseulpool.com API，每 5 分钟刷新）——示例见英文部分。颜色：绿色 = 接受的份额/已连接，
-黄色 = 过期或丢弃的份额，红色 = 被拒绝的份额、错误、硬件错误、断线，青色 = 新区块高度与难度变化，粗体品红 = 找到区块，暗色 = 开发者费用时段。
-日志文件、管道、HiveOS 与 systemd 日志均为纯文本；`--no-color` 或 `NO_COLOR=1` 关闭控制台颜色。
+对您钱包的统计（saseulmine `/account`、rabbitminer.cc 钱包 API、saseulpool.com API，每 5 分钟刷新）——示例见英文部分。颜色见第 3a 节。
+
+### 3a. 控制台颜色（0.5.0 新增）
+每种颜色只有一种含义，日志行、每 10 秒的状态行和每 60 秒的表格中一致：
+
+| 消息 / 数值 | 颜色 |
+|---|---|
+| **找到区块**（`*** BLOCK FOUND ***`，表格中 N > 0 时的 `blocks N`） | 品红底粗体亮白（最醒目的样式，不用于其他内容） |
+| 接受 / 已送达的份额、已连接、`online`、自检 / 矿池测试 `ok` | 绿色 |
+| 算力数值：状态行中的 `GPUn 4.611` 与 `total … GH/s`、表格的 GH/s 列、`--bench` | 粗体亮白 |
+| 能效 `MH/W`（状态行与表格） | 粗体亮蓝 |
+| GPU 温度（表格） | 低于 70 °C 绿色，70–79 °C 黄色，80 °C 起红色 |
+| 合计：`rig` 行、表格标题 | 粗体 |
+| 过期 / 丢弃 / low-diff 份额、等待任务、切换服务器、矿池统计未更新 | 黄色 |
+| 被拒绝的份额、错误、硬件错误、断线、`OFFLINE` / `pool offline` | 红色 |
+| 新区块高度、份额难度 / 除数变化 | 青色 |
+| 开发者费用时段（其份额行与状态行） | 暗色 |
+| 时间戳、表格列名 | 灰色 |
+
+何时使用颜色（`--color`，默认 `auto`）：
+- `auto`：终端；以及从终端观看的管道（stdin 是终端，或矿工运行在 GNU screen 中），例如 `./ffgs … | tee ffgs.log`。
+  重定向到文件、作为服务运行（systemd：stdin 为 `/dev/null`）以及 `--log` 文件均不带颜色。`NO_COLOR`（非空）关闭 `auto`，
+  `FORCE_COLOR`（非空且不为 `0`）使其等同 `always`。
+- `always`：所有输出都带转义码，包括 `--log` 文件。`never`（或 `--no-color`）：全部为纯文本。
+- **HiveOS**：`h-run.sh` 在 `miner` screen 中运行 `ffgs … | tee ffgs.log`，`auto` 会为其着色：`miner` 与网页 “miner log”
+  （显示 `/var/log/miner/ffgs/ffgs.log` 中的 ANSI 颜色）均有颜色。`h-stats.sh` 照常解析带颜色的日志（颜色只包围完整的字段）。
+  Extra config 中 `--color never` 得到纯文本日志，`--color always` 在某个 HiveOS 版本不经终端启动矿工时强制着色。
+- **Windows**：Windows 10+ 控制台（ffgs 开启 ANSI / VT 模式）；旧控制台为纯文本。重定向输出（`> file`、`| Tee-Object`）
+  除非 `--color always` 否则不带颜色；`logs\ffgs.log` 始终为纯文本。
+- 浅色背景的终端中亮白色不易阅读，请使用 `--color never`。
+
+### 3b. Kavatar SL 矿池（0.5.0 起默认）
+
+未指定 `--pool` 时，ffgs 在 ffgs 作者的 **Kavatar SL Pool** 挖矿（`--pool kavatar` 相同）：`sl.kasplay.online:3333`，
+统计与钱包查询：**https://kavatar.kasplay.online**（EN / RU / 中文）。
+
+- **PPLNS**：区块奖励按出块前 2 倍全网难度工作量内的份额分配（按份额难度加权），长期矿工不受跳池者影响。**矿池手续费 2%。**
+- **每 6 小时自动支付，满 10 SL 起付**，直接到您的地址。交易上链后才算已支付；30 分钟内未上链的支付会退回余额。
+- 矿池运行自己的 SASEUL 节点；区块的 9 个奖励窗口全部确认后（出块后约 15 分钟），奖励（resource）精炼为 SL 并入账。入账、支付和区块均可在网站查看。
+- 每个连接的份额难度自动调整（约每 15 秒一个份额），nonce 40 位十六进制，无需密码；矿工名为 `--wallet 地址.矿工名` 中点号后的部分（或 `--worker`）。
+- 控制台的 `pool` 行显示矿池对您钱包的统计：10 分钟算力、余额、已支付、未成熟区块。
+- 开发者费用的那一分钟在同一矿池为 ffgs 开发者钱包挖矿（不连接其他矿池）。
 
 ### 4. HiveOS
 见 [HIVEOS.md](HIVEOS.md)。
@@ -634,7 +770,7 @@ ffgs 可以像 FreeForGemPear 一样设置挖矿显卡的频率：
 - Windows：在 `start.bat` / `start-saseulmine.bat` / `start-saseulpool.bat` 中设置 `LOCK_CCLOCK`、`LOCK_MCLOCK`、`COFFSET`、`MOFFSET`、`PLIMIT`；设置任一项时，
   脚本会请求以管理员身份重新打开（默认 `AUTO_ELEVATE=1`）。
 
-**RTX 3070 实测：** `--lock-cclock 1400 --lock-mclock 810 --coffset 225` → 约 **4.6 GH/s，73–75 W（约 62 MH/W）**；
+**RTX 3070 实测（0.5.0）：** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → 在 40 位十六进制矿池（Kavatar、saseulmine、单人）**5.05 GH/s，74 W（68 MH/W）**，16 位矿池 4.65 GH/s；
 `--lock-cclock 1560` 约 5.1 GH/s，约 110 W。详见 README 调优表。
 
 ### 5b. AMD 显卡（0.4.0 新增）
@@ -648,21 +784,23 @@ ffgs 可以像 FreeForGemPear 一样设置挖矿显卡的频率：
 - 5a 中的频率参数以及功耗 / 频率 / 温度 / 风扇列**仅适用于 NVIDIA**；AMD 后端会忽略频率参数（给出一条警告）——
   请在 Adrenalin / HiveOS 超频中设置 AMD 的频率和电压。
 - `--bench` 会在 CPU 上复核每个候选结果并打印硬件错误数，可用于验证降压是否稳定。
+- 开发说明与测试数据：源代码仓库中的 `docs/amd.md`。
 
-### 6. 开发者费用与 saseulmine 推荐人
-1.0%：每 100 分钟中有 60 秒（首次在 15 分钟后）通过第二条已登录的、同一矿池（rabbitminer、saseulmine 或 saseulpool）的连接向开发者钱包提交份额，无需重连。
+### 6. 开发者费用与推荐：2% = 1% 开发者 + 1% 推荐人
+费用为 **2%：每 100 分钟中有两个独立的 60 秒窗口**（首次在挖矿 15 分钟后）：
 
-**单人挖矿**（`主机:端口` 矿池列表中没有 rabbitminer.cc 主机 = 单人代理 / 自建节点，见第 8 节）：开发者费用的那一分钟改在
-**saseulmine.com**（HTTPS）上为开发者钱包挖矿，而不是在您的节点上——在自己的节点上它只会付给您自己的地址。时间安排相同
-（每 100 分钟 60 秒，首次在 15 分钟后）。若无法连接 saseulmine.com，ffgs
-改用 rabbitminer.cc（`nl`/`fi.rabbitminer.cc:1931`）（日志 `dev fee: … not reachable, using fee-rabbitminer`）。两条费用连接始终保持，
-GPU 只在费用任务就绪后才切换，费用矿池连接期间继续为您计算；费用窗口严格限制为**60 秒实际时间**（包括连接和备用矿池）：
-若窗口内两个费用矿池都未就绪，则本次费用跳过（`dev fee: no fee pool reachable, mining for your wallet …`）。
+- **1% 给推荐人**——在您自己的矿池为 **`--referrer 地址`**（向您推荐 ffgs 的人）挖矿。未指定 `--referrer`（或 `--referrer none`）
+  时，推荐分钟归开发者。单人 / 自建节点：推荐分钟在 Kavatar SL Pool 挖矿（您的节点不会付给该地址）。
+- **1% 给 ffgs 开发者**——在您自己的矿池为开发者钱包（`a750e196…a624`）挖矿（单人 / 自建节点：saseulmine.com，然后 rabbitminer.cc）。
+- **推荐人填写自己的钱包 = 总费用 1%**：完全不切换到推荐人，剩下的开发者分钟在 **Kavatar SL Pool**（`sl.kasplay.online:3333`，
+  ffgs 作者的矿池）挖矿；若无法连接 Kavatar，则在您自己的矿池。如果您本来就在 Kavatar 挖矿，则完全不切换矿池。
+- 两条费用连接提前建立并始终保持，GPU 只切换到已就绪的费用任务，费用矿池连接期间继续为您计算；每个窗口严格为
+  **60 秒实际时间**：若费用矿池未就绪，则跳过该窗口。启动日志显示推荐人；状态行分别统计开发者（`fee …`）和推荐（`ref …`）份额。
+- Windows：启动 `.bat` 中的 `REFERRER=`；HiveOS：在 *Extra config arguments* 中填写 `--referrer 地址`。
 
-**推荐人（仅 saseulmine）。** saseulmine.com 将区块收益分为：矿工 80%、推荐人 10%、矿池 10%，并在其网站上说明：
-*"No referrer? Your share is unchanged."*（没有推荐人，您的份额也不变）——即推荐人的 10% 来自矿池的部分，而不是您的部分。
-ffgs 默认把 ffgs 开发者钱包（`a750e196…a624`）作为您的推荐人发送；这不会改变您的收益（依据矿池的说明，我们无法审计其账目）。
-不发送推荐人：`--referrer none`；指定其他推荐人：`--referrer 地址`。启动时日志会显示推荐人。
+**saseulmine 推荐人。** saseulmine.com 本身也有推荐机制：区块按 80% 矿工 / 10% 推荐人 / 10% 矿池分配，并说明
+*"No referrer? Your share is unchanged."*——推荐人的 10% 来自矿池部分。ffgs 也会把您的 `--referrer` 发送给它（默认：开发者钱包；
+`--referrer none` 则不发送）。
 
 ### 6a. saseulmine.com 说明
 - 使用 HTTPS（`pool.saseulmine.com:443`），每个请求都用 Ed25519 *客户端密钥* 签名。ffgs 首次运行时生成该密钥并保存在程序旁的

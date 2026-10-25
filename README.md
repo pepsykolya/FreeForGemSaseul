@@ -7,14 +7,17 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
 - **AMD Radeon** (new in 0.4.0, OpenCL, tuned for RDNA2: RX 6800 XT 9.0–9.9 GH/s) — the same binary picks the
   backend itself (`--backend auto|cuda|amd`); tested on Windows, Linux AMD not tested yet ([MANUAL 5b](MANUAL.md#5b-amd-gpus-new-in-040))
 - **GPU clock control** built in (NVIDIA): `--lock-cclock`, `--lock-mclock`, `--coffset`, `--moffset`, `--plimit`
-- Pools: **rabbitminer.cc** (TCP), **saseulmine.com** (HTTPS, `--pool saseulmine`), **saseulpool.com** (NATS,
+- Pools: **Kavatar SL Pool** — ours, the default (`sl.kasplay.online:3333`, PPLNS, 2% fee, payouts every 6 h from
+  10 SL, [kavatar.kasplay.online](https://kavatar.kasplay.online), [MANUAL 3b](MANUAL.md#3b-kavatar-sl-pool-default-since-050));
+  **rabbitminer.cc** (TCP), **saseulmine.com** (HTTPS, `--pool saseulmine`), **saseulpool.com** (NATS,
   `--pool saseulpool`); **solo** through your own node with the bundled solo proxy ([MANUAL 8](MANUAL.md#8-solo-mining-own-node))
-- **Dev fee 1.0%** (60 s every 100 min, the first one after 15 min of mining). On saseulmine the ffgs dev wallet is also
-  sent as your *referrer* by default — per the pool this does not reduce your payout; `--referrer none` turns it off
-  ([details](MANUAL.md#6-dev-fee-and-the-saseulmine-referrer))
+- **Fee 2% = 1% dev + 1% referral** (two 60 s windows every 100 min, the first after 15 min). The referral minute
+  goes to the wallet in `--referrer ADDRESS` (whoever recommended ffgs to you), the dev minute to the dev — both on your
+  pool. **Put your own wallet as referrer and the total fee is 1%** (the dev minute is then mined on Kavatar SL Pool);
+  without `--referrer` both minutes go to the dev ([details](MANUAL.md#6-dev-fee-and-referral-2--1-dev--1-referral))
 - Every share is re-checked on the CPU before it is sent; a self-test against a real mainnet block runs at every start
 
-🎬 **Video tutorials (0.4.0):** [Russian, interview](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-RU.mp4) · [English](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0-tutorial-EN.mp4) — the coin, Guardee wallet, pools, setup, undervolt and hashrates
+🎬 **Video tutorials (0.5.0, two hosts):** [Russian](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.0/ffgs-0.5.0-tutorial-RU.mp4) · [English](https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.0/ffgs-0.5.0-tutorial-EN.mp4) — the coin, wallet, our Kavatar SL Pool, setup on Windows / Linux / HiveOS (NVIDIA and AMD), the referral fee, undervolt and hashrates
 
 📖 **Manual (EN / RU / 中文):** [MANUAL.md](MANUAL.md) · HiveOS: [HIVEOS.md](HIVEOS.md) · Changes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -28,16 +31,17 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
 
 ## Quick start (Linux)
 
-    tar xzf ffgs-0.4.0-linux-x86_64.tar.gz && cd ffgs-0.4.0
+    tar xzf ffgs-0.5.0-linux-x86_64.tar.gz && cd ffgs-0.5.0
+    ./ffgs --wallet <your SASEUL address>.<worker>                        # Kavatar SL Pool (default)
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet <your SASEUL address>.<worker>
     ./ffgs --pool saseulmine --wallet <your SASEUL address>.<worker>      # saseulmine.com
     ./ffgs --pool saseulpool --wallet <your SASEUL address>.<worker>      # saseulpool.com (= nats://nats.saseulpool.com:4222)
-    sudo ./ffgs --pool saseulmine --wallet <address> --lock-cclock 1400 --lock-mclock 810 --coffset 225   # with clock control
+    sudo ./ffgs --wallet <address>.<worker> --lock-cclock 1400 --lock-mclock 810 --coffset 325   # with clock control
 
 ## Quick start (Windows)
 
-Unzip `ffgs-0.4.0-windows-x64.zip`, put your address into `start.bat` (rabbitminer), `start-saseulmine.bat` or
-`start-saseulpool.bat` and run it (or `ffgs.exe --pool saseulpool --wallet <address>.<worker>`). Only the GPU driver is needed (NVIDIA, or AMD Adrenalin). Optional clock settings:
+Unzip `ffgs-0.5.0-windows-x64.zip`, put your address into `start.bat` (Kavatar SL Pool), `start-rabbitminer.bat`,
+`start-saseulmine.bat` or `start-saseulpool.bat` and run it (or `ffgs.exe --wallet <address>.<worker>`). Only the GPU driver is needed (NVIDIA, or AMD Adrenalin). Optional clock settings:
 `LOCK_CCLOCK` / `LOCK_MCLOCK` / `COFFSET` / `MOFFSET` / `PLIMIT` in the same file (the script then asks for Administrator).
 The log is also written to `logs\ffgs.log`.
 
@@ -47,11 +51,11 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 
 | Field | Value |
 |---|---|
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.4.0/ffgs-0.4.0.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.0/ffgs-0.5.0.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
-| Pool URL | `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931`, `https://pool.saseulmine.com` or `nats://nats.saseulpool.com:4222` |
-| Extra config arguments | *(empty)*, or `--eco`, `--devices 0,2`, `--referrer none` |
+| Pool URL | `sl.kasplay.online:3333` (Kavatar SL Pool); or `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931`, `https://pool.saseulmine.com`, `nats://nats.saseulpool.com:4222` |
+| Extra config arguments | *(empty)*, or `--referrer ADDRESS` (1% referral; your own wallet = total fee 1%), `--eco`, `--devices 0,2` |
 
 ## GPU clock control (0.4.0)
 
@@ -65,7 +69,7 @@ OC tool on the same GPU.
 
 | Goal | `--lock-cclock` | `--lock-mclock` | `--coffset` | Result |
 |---|---|---|---|---|
-| **best efficiency** | **1400** | **810** | **225** | **~4.6 GH/s at 73–75 W, ~62 MH/W** (0.3.0: 80 min at 4.61 GH/s / 73 W; 0.4.0 with `--coffset 200`: 4.63 GH/s / 75 W) |
+| **best efficiency** | **1400** | **810** | **325** | **0.5.0: 5.05 GH/s at 74 W, 68 MH/W** on 40-hex pools (Kavatar SL Pool, saseulmine, solo); 4.65 GH/s at 73 W on rabbitminer / saseulpool (16 hex). Our card reaches the voltage floor at +325; others: raise the offset in steps of 25–50 while the watts drop |
 | more hashrate | 1560 | 810 | 175 | 5.16 GH/s at ~113 W, ~46 MH/W (0.2.0 bench) |
 
 Every card differs: if `hardware error (bad candidate)` lines or rejects appear, lower the offset or the core clock.
@@ -81,8 +85,9 @@ Every card differs: if `hardware error (bad candidate)` lines or rejects appear,
       shares  accepted 2 (100.0%)  stale 0 (0.0%)  low-diff 0 (0.0%)  rejected 0 (0.0%)  dropped 0  blocks 0  round trip 330 ms  | dev fee acc 0/0
       pool    saseulmine: hashrate 1h 9.01 GH/s, 24h 0.73 GH/s | round shares 823 (0.364% of the pool) | paid 0 (0 payouts) (0 min ago)
 
-Colors on the console (green accepted, yellow stale/dropped, red rejected/errors, cyan new block / difficulty, magenta
-block found, dim dev fee); log files and HiveOS get plain text.
+Colors (`--color auto|always|never`, default auto: terminal, HiveOS `miner` screen and its web log; `--log` files plain):
+block found = bold white on magenta, accepted green, hashrate bold white, MH/W bold blue, temperature green/yellow/red,
+stale/dropped yellow, rejected/errors red, new block / difficulty cyan, dev fee dim. Details: MANUAL 3a.
 
 ## Performance (RTX 3070, same card, same settings)
 
@@ -115,6 +120,7 @@ The default kernel moves the integer additions of SHA-256 to the FMA pipe (the i
 
 | Pool | Address | Notes |
 |---|---|---|
+| **Kavatar SL Pool** (ours, default) | `sl.kasplay.online:3333` (TCP, = `--pool kavatar`) | PPLNS (2 × network difficulty), pool fee 2%, payouts every 6 h from 10 SL, own SASEUL node, vardiff; site + wallet lookup [kavatar.kasplay.online](https://kavatar.kasplay.online) — [MANUAL 3b](MANUAL.md#3b-kavatar-sl-pool-default-since-050) |
 | rabbitminer.cc | `nl.rabbitminer.cc:1931`, `fi.rabbitminer.cc:1931` (TCP) | pool fee 10%, payout from 100 SL |
 | saseulmine.com | `saseulmine` = `https://pool.saseulmine.com` (HTTPS) | miners 80% / referrers 10% / pool 10% ("no referrer — your share is unchanged"), daily payouts, vardiff |
 | saseulpool.com | `saseulpool` = `nats://nats.saseulpool.com:4222` (NATS) | PPLNS 90 min, pool fee 5%, payouts every 6 h from 10 SL, fixed share difficulty (network / 4096); the pool answers no single share — see [MANUAL 6b](MANUAL.md#6b-saseulpoolcom-details) |

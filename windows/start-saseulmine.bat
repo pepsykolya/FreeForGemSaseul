@@ -1,11 +1,15 @@
 @echo off
 rem FreeForGemSaseul (ffgs) - SASEUL (SL) GPU miner on saseulmine.com.
 rem Put your SASEUL address (44 hex chars) below, save, double-click this file.
-rem The ffgs dev wallet is sent as your referrer (the pool says your share is unchanged); EXTRA=--referrer none turns it off.
+rem REFERRER below is also sent to saseulmine as your referrer (empty = the ffgs dev wallet; REFERRER=none = no referrer there).
 cd /d "%~dp0"
 set WALLET=YOUR_SASEUL_ADDRESS
 rem GPUs to use, numbered as in nvidia-smi (empty = all), e.g. 0,1
 set DEVICES=
+rem Fee 2% = 1% ffgs dev + 1% referral. REFERRER = the SASEUL address of who recommended ffgs to you:
+rem they get the 1% referral minute. Put your own wallet here to pay only 1% in total.
+rem Empty = the referral minute goes to the ffgs dev.
+set REFERRER=
 
 rem ---- Optional GPU clock control (empty = leave as is). Needs Administrator (see AUTO_ELEVATE below).
 rem One value for all GPUs, or a comma list in DEVICES order (empty entry or 0 = leave that GPU alone),
@@ -23,10 +27,11 @@ set PLIMIT=
 rem 1 = when clock settings are set and this window is not elevated, ask Windows to reopen it as Administrator
 set AUTO_ELEVATE=1
 
-rem Extra arguments, e.g. --eco or --referrer none
+rem Extra arguments, e.g. --eco
 set EXTRA=
 
 set ARGS=--pool saseulmine --wallet %WALLET%
+if not "%REFERRER%"=="" set ARGS=%ARGS% --referrer %REFERRER%
 if not "%DEVICES%"=="" set ARGS=%ARGS% --devices %DEVICES%
 if not "%LOCK_CCLOCK%"=="" set ARGS=%ARGS% --lock-cclock %LOCK_CCLOCK%
 if not "%LOCK_MCLOCK%"=="" set ARGS=%ARGS% --lock-mclock %LOCK_MCLOCK%

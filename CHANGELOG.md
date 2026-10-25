@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased / 0.5.0
+- **Fee 2% = 1% dev + 1% referral.** Two 60 s windows per 100 min, both on your own pool: 1% referral for
+  `--referrer ADDRESS` (solo: on Kavatar), 1% dev (old per-pool rule); no `--referrer` = both minutes for the dev.
+  **Your own wallet as referrer = no referral switch, total fee 1%, and the dev minute is mined on Kavatar SL Pool**
+  (`sl.kasplay.online:3333`; fallback: your pool). `--referrer` is still also the saseulmine
+  referrer. Windows: `REFERRER=` in the start scripts. Status line: `ref sub/acc/rej` next to `fee`.
+- **Faster kernel on RTX 30 (sm_86)**: the 40-hex layout (Kavatar SL Pool, saseulmine, solo) hashes 4 nonces per loop
+  pass at 2 blocks/SM: RTX 3070 at 1400/810 MHz, `--coffset 325`: **5.05 GH/s at 74 W, 68 MH/W** (0.4.0: 4.63 GH/s,
+  65 MH/W; +9% GH/s, +4% MH/W); stock +6.6%. `--eco` +2%. 16-hex (rabbitminer, saseulpool) unchanged; other GPU
+  generations unchanged (not measured). Details: docs/JOURNAL.md.
+- **HiveOS: AMD and mixed rigs** — h-run.sh detects NVIDIA / AMD cards (HiveOS gpu-stats, lspci fallback), checks the
+  AMD OpenCL runtime, runs a CUDA and an AMD process on mixed rigs; h-stats.sh reports AMD bus numbers, temperatures
+  and fans (fixes 0.4.0 losing AMD bus ids on long runs). AMD OC for SASEUL in HiveOS (core, VDD, VDDCI, MVDD, SoC):
+  HIVEOS.md. The flight sheet for Kavatar can be imported from the clipboard (JSON on https://kavatar.kasplay.online).
+- **Kavatar SL Pool — our pool — is the default** (`sl.kasplay.online:3333`, also `--pool kavatar`; site
+  https://kavatar.kasplay.online): PPLNS over 2 network difficulties, 2% fee, automatic payouts every 6 h from 10 SL,
+  its own SASEUL node. The dev fee minute is mined on the same pool; the console's `pool` line shows the pool's view of
+  the wallet (10-min hashrate, balance, paid, immature blocks). Windows: `start.bat` mines there, the former rabbitminer
+  script is `start-rabbitminer.bat`. A pool list without Kavatar or rabbitminer.cc hosts is still treated as solo.
+- **Console colors, one meaning per color** (MANUAL 3a): block found = bold bright white on magenta (the loudest
+  style), accepted / delivered shares and connects green, hashrate values bold bright white and MH/W bold bright blue
+  (10 s status line, table, `--bench`), GPU temperature green / yellow / red (< 70, 70–79, ≥ 80 °C), totals bold,
+  stale / dropped / low-diff yellow, rejected / errors / hardware errors / connection lost red, new block height and
+  difficulty changes cyan, dev fee dim, timestamps and column titles gray. Presentation only: the text is unchanged.
+- `--color auto|always|never` (`--no-color` = never; `NO_COLOR` / `FORCE_COLOR` honored under auto). `auto` now also
+  colors a pipe watched from a terminal (stdin is a terminal or inside GNU screen): HiveOS `ffgs | tee` in the `miner`
+  screen and its web miner log are colored; `h-stats.sh` parses the colored log unchanged (colors only around whole
+  tokens). Files, services (systemd) and `--log FILE` stay plain text unless `--color always`. Windows: VT mode on the
+  Windows 10+ console, plain text on older consoles and on redirected output.
+
 ## 0.4.0 — 2026-10-23
 - **saseulpool.com pool support** (the third SL pool): `--pool saseulpool` (= `nats://nats.saseulpool.com:4222`; any
   `nats://HOST[:PORT]` selects this protocol, several = failover, the other servers of the pool's NATS cluster are
@@ -49,7 +79,7 @@
   9.86 GH/s saseulmine layout at stock, 9.7 GH/s at 164 W with 2300 MHz / 881 mV). `--backend auto|cuda|amd`; auto =
   CUDA if an NVIDIA GPU is present, else AMD. Windows: the Adrenalin driver's OpenCL; Linux: libOpenCL.so.1 (ROCm /
   amdgpu-pro; untested). Integrated GPUs are skipped. The clock options and the power / temperature / fan columns are
-  NVIDIA only (with `--backend amd` the clock options are ignored with a warning).
+  NVIDIA only (with `--backend amd` the clock options are ignored with a warning). Details: `docs/amd.md`.
 - `--bench` re-verifies every candidate on the CPU (stability check: hardware errors, candidate count vs expected).
 - HiveOS `h-stats.sh`: bus/temp/fan of AMD GPUs from HiveOS gpu-stats.
 - **Solo mining** documented and shipped in the source: `solo/sl_solo_proxy.py` (your SASEUL node's `run/mining_job`

@@ -8,6 +8,10 @@ rem Worker name shown on saseulpool.com (empty = this computer's name)
 set WORKER=
 rem GPUs to use, numbered as in nvidia-smi (empty = all), e.g. 0,1
 set DEVICES=
+rem Fee 2% = 1% ffgs dev + 1% referral. REFERRER = the SASEUL address of who recommended ffgs to you:
+rem they get the 1% referral minute. Put your own wallet here to pay only 1% in total.
+rem Empty = the referral minute goes to the ffgs dev.
+set REFERRER=
 
 rem ---- Optional GPU clock control (empty = leave as is). Needs Administrator (see AUTO_ELEVATE below).
 rem One value for all GPUs, or a comma list in DEVICES order (empty entry or 0 = leave that GPU alone),
@@ -29,6 +33,7 @@ rem Extra arguments, e.g. --eco
 set EXTRA=
 
 set ARGS=--pool saseulpool --wallet %WALLET%
+if not "%REFERRER%"=="" set ARGS=%ARGS% --referrer %REFERRER%
 if not "%WORKER%"=="" set ARGS=%ARGS% --worker %WORKER%
 if not "%DEVICES%"=="" set ARGS=%ARGS% --devices %DEVICES%
 if not "%LOCK_CCLOCK%"=="" set ARGS=%ARGS% --lock-cclock %LOCK_CCLOCK%

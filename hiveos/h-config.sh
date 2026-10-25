@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # FreeForGemSaseul (ffgs) — SASEUL (SL) GPU miner
 # Called by HiveOS with the flight sheet variables; writes the miner arguments to $CUSTOM_CONFIG_FILENAME.
-#   Pool URL       (CUSTOM_URL)          host:port[,host2:port2], e.g. nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931
+#   Pool URL       (CUSTOM_URL)          host:port[,host2:port2], e.g. sl.kasplay.online:3333 (Kavatar SL Pool),
+#                                        nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931,
 #                                        or https://pool.saseulmine.com (saseulmine protocol, passed as is)
 #                                        or nats://nats.saseulpool.com:4222 (saseulpool protocol, passed as is)
 #   Wallet/worker  (CUSTOM_TEMPLATE)     %WAL%.%WORKER_NAME%  (or just %WAL%)
@@ -11,6 +12,7 @@ cd "$(dirname "$0")"
 
 url=$(echo "${CUSTOM_URL:-}" | tr ' ' ',')     # several URLs in the flight sheet = failover list
 tpl=${CUSTOM_TEMPLATE:-}
+tpl=${tpl//%WORKER_NAME%/${WORKER_NAME:-rig}}   # normally already substituted by HiveOS
 wallet=${tpl%%.*}
 worker=${WORKER_NAME:-rig}
 [[ $tpl == *.* ]] && worker=${tpl#*.}
