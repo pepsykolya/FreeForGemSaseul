@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2
+- **Faster CUDA kernel** (same results, every share still re-checked on the CPU). Kavatar SL Pool, saseulmine and solo
+  (40-hex nonces), measured on our pool: RTX 3070 5.045 -> 5.306 GH/s (+5.2%, 68.4 -> 73.4 MH/W), RTX 3080 Ti
+  8.60 -> 9.05 GH/s (+5.2%), RTX 3070 Laptop 4.38 -> 4.60 GH/s (+5.1%), RTX 4070 Ti 10.71 -> 11.98 GH/s (+11.8%).
+  rabbitminer / saseulpool (16-hex): RTX 30 +2.5%, RTX 40 as in 0.5.1. --eco: RTX 3070 +7.4% (40 hex) / +3.3% (16 hex).
+- How: loop-invariant work moved out of the hot loop (rotations the compiler could not hoist, rounds 7/13 folded,
+  constant schedule terms and K+W pre-added), a per-block shared-memory table of the schedule terms that are the same
+  for all threads of a block (40 hex: 6 sigma functions fewer per hash), a different grouping of the additions;
+  settings per GPU architecture (RTX 30 / RTX 40 measured separately).
+
 ## 0.5.1
 - **`--auto-uv`: undervolt auto-tuner** (NVIDIA, root; the FreeForGemPear tuner ported). Raises the core V/F offset in
   15 MHz steps at the locked core clock; every step is checked in a child process running the mining kernel at full
