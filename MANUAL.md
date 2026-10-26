@@ -162,6 +162,31 @@ ffgs can set the clocks of the GPUs it mines on, the same way as FreeForGemPear:
 **RTX 3070, measured (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5.05 GH/s at 74 W (68 MH/W)** on 40-hex pools (Kavatar, saseulmine, solo), 4.65 GH/s on 16-hex pools;
 `--lock-cclock 1560` gives ~5.1 GH/s at ~110 W. See the README tuning table.
 
+### 5c. Undervolt auto-tuner `--auto-uv` (new in 0.5.1)
+ffgs finds the undervolt itself (the same tuner as FreeForGemPear): it raises the core V/F offset of each NVIDIA GPU in
+15 MHz steps, checks every step and keeps the last good step minus one step of margin.
+
+    sudo ./ffgs --wallet <address>.<worker> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+
+- **Use it at a locked core clock** (`--lock-cclock`, or the lock of the HiveOS OC profile): then a higher offset means
+  the same clock at a lower voltage. NVIDIA only, needs root / Administrator.
+- **First start:** a warm-up check at the start offset (2 min), then 30 s per step up to `--uv-max`, then a 2 min
+  confirmation; all GPUs at once, mining starts after (~10–15 min). **Later starts:** the saved offset after a 20 s check.
+- **The check** runs the mining kernel at full load in a separate process on fixed test jobs: the number of candidates of
+  every launch must be exactly the reference (a GPU that computes even one hash wrong changes it within seconds) and every
+  stored candidate is re-hashed on the CPU. A crash or hang of the GPU only kills that process.
+- **While mining:** a hardware error (bad candidate) steps the GPU back by 15 MHz (saved); every 6 h a 20 s re-check
+  (that GPU pauses for it). If something else changes the offset (HiveOS OC), auto-uv leaves that GPU alone.
+- Saved in `ffgs-uv-results.txt` next to the binary (HiveOS: `/hive-config/ffgs`, kept over miner updates), per GPU, board
+  and driver. If ffgs dies during a step (kill, Xid, power), the next start puts the offset back and tunes below that step.
+  The original offset is restored on exit like with `--coffset`.
+- Options: `--uv-min MHz` (search start; default: the current offset, else +120, RTX 40/50 at least +200),
+  `--uv-max MHz` (default +495), `--uv-step MHz` (15), `--uv-reset` (forget the results, tune again),
+  `--uv-reval-hours H` (6, 0 = never). Windows: `AUTO_UV=1` in the start scripts. `--coffset` together with
+  `--auto-uv` = the search starts from that offset.
+- **RTX 3070, measured** (lock 1400/810, start +250): steps up to +385 ok, +400 failed (one candidate missing) →
+  **+370**, 73 W instead of 76 W at +250; on Kavatar 5.04 GH/s, 69 MH/W, 0 rejects.
+
 ### 5b. AMD GPUs (new in 0.4.0)
 The same `ffgs` / `ffgs.exe` also mines on AMD Radeon GPUs through OpenCL (tuned for RDNA2):
 - `--backend auto` (default) uses CUDA when an NVIDIA GPU is present, otherwise AMD; `--backend amd` forces AMD.
@@ -479,6 +504,32 @@ ffgs умеет выставлять частоты карт, на которы�
 **RTX 3070, замер (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5,05 GH/s при 74 Вт (68 MH/W)** на пулах с 40 hex (Kavatar, saseulmine, соло), 4,65 GH/s на пулах с 16 hex;
 `--lock-cclock 1560` — ~5.1 GH/s при ~110 Вт. Подробнее — таблица в README.
 
+### 5c. Автоподбор андервольта `--auto-uv` (новое в 0.5.1)
+ffgs сам подбирает андервольт (тот же тюнер, что в FreeForGemPear): поднимает V/F-оффсет ядра каждой карты NVIDIA
+шагами по 15 МГц, проверяет каждый шаг и оставляет последний удачный минус один шаг запаса.
+
+    sudo ./ffgs --wallet <адрес>.<воркер> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+
+- **Нужна зафиксированная частота ядра** (`--lock-cclock` или фиксация в OC-профиле HiveOS): тогда больший оффсет =
+  та же частота при меньшем напряжении. Только NVIDIA, нужны права root / администратора.
+- **Первый запуск:** проверка-прогрев на стартовом оффсете (2 мин), затем по 30 с на шаг до `--uv-max`, затем
+  подтверждение 2 мин; все карты одновременно, майнинг начинается после (~10–15 мин). **Следующие запуски:**
+  сохранённый оффсет после проверки 20 с.
+- **Проверка** гоняет ядро майнинга на полной нагрузке в отдельном процессе на фиксированных тестовых заданиях: число
+  кандидатов каждого запуска должно точно совпасть с эталоном (если карта хоть один хеш посчитала неверно, это видно за
+  секунды), каждый сохранённый кандидат пересчитывается на CPU. Падение или зависание карты убивает только этот процесс.
+- **Во время майнинга:** аппаратная ошибка (bad candidate) — шаг назад на 15 МГц (сохраняется); каждые 6 ч
+  перепроверка 20 с (карта на это время встаёт). Если оффсет поменял кто-то другой (OC HiveOS), auto-uv карту отпускает.
+- Результаты — `ffgs-uv-results.txt` рядом с программой (HiveOS: `/hive-config/ffgs`, переживает обновления майнера), по
+  карте, модели и драйверу. Если ffgs упал на шаге (kill, Xid, питание), следующий запуск вернёт оффсет и будет
+  подбирать ниже этого шага. При выходе исходный оффсет возвращается, как с `--coffset`.
+- Опции: `--uv-min МГц` (начало поиска; по умолчанию текущий оффсет, иначе +120, RTX 40/50 — минимум +200),
+  `--uv-max МГц` (по умолчанию +495), `--uv-step МГц` (15), `--uv-reset` (забыть результаты и подобрать заново),
+  `--uv-reval-hours Ч` (6, 0 = никогда). Windows: `AUTO_UV=1` в батниках. `--coffset` вместе с `--auto-uv` — поиск
+  начинается с этого оффсета.
+- **RTX 3070, замер** (фиксация 1400/810, старт +250): шаги до +385 ok, +400 — сбой (недосчитан один кандидат) →
+  **+370**, 73 Вт вместо 76 Вт на +250; на Kavatar 5,04 GH/s, 69 MH/W, 0 реджектов.
+
 ### 5b. Видеокарты AMD (новое в 0.4.0)
 Тот же `ffgs` / `ffgs.exe` майнит и на AMD Radeon через OpenCL (оптимизировано под RDNA2):
 - `--backend auto` (по умолчанию) берёт CUDA, если есть карта NVIDIA, иначе AMD; `--backend amd` — принудительно AMD.
@@ -772,6 +823,24 @@ ffgs 可以像 FreeForGemPear 一样设置挖矿显卡的频率：
 
 **RTX 3070 实测（0.5.0）：** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → 在 40 位十六进制矿池（Kavatar、saseulmine、单人）**5.05 GH/s，74 W（68 MH/W）**，16 位矿池 4.65 GH/s；
 `--lock-cclock 1560` 约 5.1 GH/s，约 110 W。详见 README 调优表。
+
+### 5c. 自动降压 `--auto-uv`（0.5.1 新增）
+ffgs 可以自动寻找降压值（与 FreeForGemPear 相同的调优器）：以 15 MHz 为步长提高每张 NVIDIA 显卡的核心 V/F 偏移，
+逐步校验，最终保留最后一个通过的步长再减去一步作为余量。
+
+    sudo ./ffgs --wallet <地址>.<矿机名> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+
+- **需要锁定核心频率**（`--lock-cclock` 或 HiveOS 超频配置中的锁定）：这时偏移越高 = 同频率下电压越低。仅 NVIDIA，需要 root / 管理员权限。
+- **首次启动：** 在起始偏移上预热校验 2 分钟，之后每步 30 秒直到 `--uv-max`，再确认 2 分钟；所有显卡同时进行，完成后才开始挖矿（约 10–15 分钟）。
+  **之后的启动：** 校验 20 秒后直接使用保存的偏移。
+- **校验**在独立进程中以满负载运行挖矿内核、使用固定测试任务：每次启动的候选数必须与基准完全一致（显卡哪怕算错一个哈希也会在几秒内暴露），
+  每个保存的候选都在 CPU 上重新计算。显卡崩溃或卡死只会结束该进程。
+- **挖矿过程中：** 出现硬件错误（bad candidate）时回退 15 MHz（并保存）；每 6 小时复查 20 秒（期间该卡暂停）。若偏移被其他程序修改（HiveOS 超频），auto-uv 不再管理该卡。
+- 结果保存在程序旁的 `ffgs-uv-results.txt`（HiveOS：`/hive-config/ffgs`，矿工更新后仍保留），按显卡、型号和驱动区分。若 ffgs 在某一步崩溃（kill、Xid、断电），
+  下次启动会恢复偏移并在该步以下重新调优。退出时与 `--coffset` 一样恢复原偏移。
+- 参数：`--uv-min MHz`（起点；默认当前偏移，否则 +120，RTX 40/50 至少 +200），`--uv-max MHz`（默认 +495），`--uv-step MHz`（15），
+  `--uv-reset`（清除结果重新调优），`--uv-reval-hours H`（6，0 = 不复查）。Windows：启动脚本中 `AUTO_UV=1`。
+- **RTX 3070 实测**（锁定 1400/810，起点 +250）：+385 以内全部通过，+400 失败（少一个候选）→ **+370**，功耗 73 W（+250 时 76 W）；Kavatar 上 5.04 GH/s、69 MH/W、0 拒绝。
 
 ### 5b. AMD 显卡（0.4.0 新增）
 同一个 `ffgs` / `ffgs.exe` 也可通过 OpenCL 在 AMD Radeon 显卡上挖矿（针对 RDNA2 优化）：

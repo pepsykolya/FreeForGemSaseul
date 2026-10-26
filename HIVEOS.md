@@ -67,6 +67,11 @@ list sets one value per GPU). **Use one or the other per card, not both**: when 
 it set, which also removes the HiveOS lock until HiveOS applies its OC again. For cards that should keep the HiveOS OC,
 leave their entry empty (`--lock-cclock 1400,,1400`) or do not use the ffgs options.
 
+**Auto undervolt (0.5.1):** add `--auto-uv` to *Extra config arguments* (with the core clock locked by the HiveOS OC
+profile or `--lock-cclock`; leave the OC profile's core offset as the starting point). The first start tunes
+~10–15 min before mining, the result is kept in `/hive-config/ffgs` and reused (20 s check) after reboots and miner
+updates. Example: `--referrer <your address> --lock-cclock 1400 --lock-mclock 810 --auto-uv`. MANUAL 5c.
+
 ### AMD rigs
 
 - **Same package, same flight sheet.** Without NVIDIA GPUs ffgs uses its AMD backend (OpenCL). It needs the AMD OpenCL
@@ -168,6 +173,11 @@ SL — чистые вычисления, **память в минимум** (`-
 до 1560 МГц — больше хешрейта), на андервольте — `--eco`. Обычно частоты задают в OC-профиле HiveOS. Либо ffgs
 выставляет их сам: `--lock-cclock 1400 --lock-mclock 810 --coffset 325` в *Extra config arguments*. **На одной карте —
 что-то одно**: при остановке майнера ffgs снимает свои фиксации, а с ними и фиксацию HiveOS.
+
+**Автоподбор андервольта (0.5.1):** добавьте `--auto-uv` в *Extra config arguments* (ядро зафиксировано OC-профилем
+HiveOS или `--lock-cclock`; оффсет ядра из OC-профиля станет стартовой точкой). Первый запуск подбирает ~10–15 мин до
+начала майнинга, результат хранится в `/hive-config/ffgs` и используется снова (проверка 20 с) после перезагрузок и
+обновлений майнера. Пример: `--referrer <ваш адрес> --lock-cclock 1400 --lock-mclock 810 --auto-uv`. MANUAL 5c.
 
 ### Риги AMD
 

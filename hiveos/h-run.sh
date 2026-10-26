@@ -35,6 +35,9 @@ amd_probe() {
   return 1
 }
 
+# --auto-uv results (ffgs-uv-results.txt) in /hive-config: they survive miner updates and reinstalls
+if [[ -d /hive-config ]]; then export FFGS_STATE_DIR=${FFGS_STATE_DIR:-/hive-config/ffgs}; mkdir -p "$FFGS_STATE_DIR"; fi
+
 nv=$(gpu_count nvidia)
 amd=$(gpu_count amd)
 single=0

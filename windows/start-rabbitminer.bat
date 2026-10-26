@@ -25,6 +25,9 @@ rem Memory clock offset, MHz, may be negative (NVIDIA driver 555+):
 set MOFFSET=
 rem Power limit, W:
 set PLIMIT=
+rem 1 = undervolt auto-tuner (--auto-uv): finds the highest stable core offset itself, at a locked core clock
+rem (set LOCK_CCLOCK). The first start tunes ~10-15 min before mining, later starts reuse the saved result.
+set AUTO_UV=
 rem 1 = when clock settings are set and this window is not elevated, ask Windows to reopen it as Administrator
 set AUTO_ELEVATE=1
 
@@ -39,7 +42,8 @@ if not "%LOCK_MCLOCK%"=="" set ARGS=%ARGS% --lock-mclock %LOCK_MCLOCK%
 if not "%COFFSET%"=="" set ARGS=%ARGS% --coffset %COFFSET%
 if not "%MOFFSET%"=="" set ARGS=%ARGS% --moffset %MOFFSET%
 if not "%PLIMIT%"=="" set ARGS=%ARGS% --plimit %PLIMIT%
-set OC=%LOCK_CCLOCK%%LOCK_MCLOCK%%COFFSET%%MOFFSET%%PLIMIT%
+if "%AUTO_UV%"=="1" set ARGS=%ARGS% --auto-uv
+set OC=%LOCK_CCLOCK%%LOCK_MCLOCK%%COFFSET%%MOFFSET%%PLIMIT%%AUTO_UV%
 if "%OC%"=="" goto run
 net session >nul 2>&1
 if not errorlevel 1 goto run

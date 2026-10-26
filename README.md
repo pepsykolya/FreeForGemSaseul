@@ -6,6 +6,7 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
 - Linux x86_64, **HiveOS** and **Windows x64**; NVIDIA Pascal … Blackwell (GTX 10xx – RTX 50xx), driver 525+
 - **AMD Radeon** (new in 0.4.0, OpenCL, tuned for RDNA2: RX 6800 XT 9.0–9.9 GH/s) — the same binary picks the
   backend itself (`--backend auto|cuda|amd`); tested on Windows, Linux AMD not tested yet ([MANUAL 5b](MANUAL.md#5b-amd-gpus-new-in-040))
+- **Undervolt auto-tuner** `--auto-uv` (NVIDIA, new in 0.5.1): finds the highest stable core offset itself, checks it while mining (MANUAL 5c)
 - **GPU clock control** built in (NVIDIA): `--lock-cclock`, `--lock-mclock`, `--coffset`, `--moffset`, `--plimit`
 - Pools: **Kavatar SL Pool** — ours, the default (`sl.kasplay.online:3333`, PPLNS, 2% fee, payouts every 6 h from
   10 SL, [kavatar.kasplay.online](https://kavatar.kasplay.online), [MANUAL 3b](MANUAL.md#3b-kavatar-sl-pool-default-since-050));

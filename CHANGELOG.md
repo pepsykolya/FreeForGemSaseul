@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased / 0.5.0
+## 0.5.1
+- **`--auto-uv`: undervolt auto-tuner** (NVIDIA, root; the FreeForGemPear tuner ported). Raises the core V/F offset in
+  15 MHz steps at the locked core clock; every step is checked in a child process running the mining kernel at full
+  load (candidate count of every launch against a reference + CPU re-hash). Result = last good step - 15, confirmed,
+  saved per GPU/board/driver (`ffgs-uv-results.txt`, HiveOS `/hive-config/ffgs`), reused after a 20 s check. While
+  mining: a hardware error steps back 15 MHz, a 20 s re-check every 6 h, hands off if the offset is changed by someone
+  else; a crash during a step makes the next start tune below it. `--uv-min/--uv-max/--uv-step/--uv-reset/
+  --uv-reval-hours`; Windows `AUTO_UV=1`. RTX 3070 at 1400/810: +370 (edge +400), 73 W, 5.04 GH/s, 0 rejects. MANUAL 5c.
+- The console table shows the core offset that is really set (also when auto-uv changed it).
+- Kavatar / rabbitminer: the log says why a connection was lost or could not be made (`no answer to getjob for 10 s`,
+  `closed by the pool`, `Connection refused`, DNS) instead of only `connection lost`.
+
+## 0.5.0
 - **Fee 2% = 1% dev + 1% referral.** Two 60 s windows per 100 min, both on your own pool: 1% referral for
   `--referrer ADDRESS` (solo: on Kavatar), 1% dev (old per-pool rule); no `--referrer` = both minutes for the dev.
   **Your own wallet as referrer = no referral switch, total fee 1%, and the dev minute is mined on Kavatar SL Pool**
