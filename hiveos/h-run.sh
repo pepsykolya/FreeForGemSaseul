@@ -9,7 +9,7 @@ cd "$(dirname "$0")" || exit 1
 mkdir -p "$(dirname "$CUSTOM_LOG_BASENAME")"
 # GPU numbering in PCI bus order, the same as nvidia-smi and the HiveOS dashboard
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-read -r -a args < "$CUSTOM_CONFIG_FILENAME"
+read -r -d '' -a args < "$CUSTOM_CONFIG_FILENAME"   # the whole file (an older h-config.sh kept newlines)
 log=${CUSTOM_LOG_BASENAME}.log
 runs=${CUSTOM_LOG_BASENAME}.runs   # "backend log" per ffgs process, read by h-stats.sh
 
@@ -46,9 +46,21 @@ single=0
 if (( !single && nv > 0 && amd > 0 )) && amd_probe; then
   echo "ffgs: mixed rig ($nv NVIDIA + $amd AMD): CUDA process -> $log, AMD process -> ${CUSTOM_LOG_BASENAME}-amd.log"
   printf 'cuda %s\namd %s\n' "$log" "${CUSTOM_LOG_BASENAME}-amd.log" > "$runs"
+  # --api [HOST:]PORT (0.5.4): the AMD process listens on PORT+1 (both cannot have one port); h-stats.sh reads each
+  # process' address from its own log
+  amd_args=("${args[@]}")
+  for i in "${!amd_args[@]}"; do
+    [[ ${amd_args[i]} == --api && -n ${amd_args[i+1]:-} ]] || continue
+    spec=${amd_args[i+1]}; port=${spec##*:}; host=""
+    [[ $spec == *:* ]] && host=${spec%:*}:
+    if [[ $port =~ ^[0-9]+$ ]] && (( port >= 1 && port < 65535 )); then
+      amd_args[i+1]=$host$((port + 1))
+      echo "ffgs: --api $spec for the CUDA process, --api ${amd_args[i+1]} for the AMD process"
+    fi
+  done
   ./ffgs --backend cuda "${args[@]}" > >(exec tee --append "$log") 2>&1 &
   p1=$!
-  ./ffgs --backend amd "${args[@]}" > >(exec tee --append "${CUSTOM_LOG_BASENAME}-amd.log") 2>&1 &
+  ./ffgs --backend amd "${amd_args[@]}" > >(exec tee --append "${CUSTOM_LOG_BASENAME}-amd.log") 2>&1 &
   p2=$!
   trap 'kill $p1 $p2 2>/dev/null' EXIT INT TERM HUP   # stopping the miner stops both
   while kill -0 $p1 2>/dev/null && kill -0 $p2 2>/dev/null; do sleep 5; done   # one ended: stop the other too,

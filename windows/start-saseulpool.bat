@@ -15,20 +15,29 @@ set REFERRER=
 
 rem ---- Optional GPU clock control (empty = leave as is). Needs Administrator (see AUTO_ELEVATE below).
 rem One value for all GPUs, or a comma list in DEVICES order (empty entry or 0 = leave that GPU alone),
-rem e.g. LOCK_CCLOCK=1400,,1500. Everything is put back when ffgs exits. RTX 3070: 1400 / 810 / 225 (README).
+rem e.g. LOCK_CCLOCK=1400,,1500. Everything is put back when ffgs exits. RTX 3070: LOCK_CCLOCK=1500, LOCK_MCLOCK=810, AUTO_UV=1 (README).
 rem Core clock lock, MHz:
 set LOCK_CCLOCK=
 rem Memory clock lock, MHz (810 = lowest; SL needs no memory bandwidth):
 set LOCK_MCLOCK=
-rem Core clock V/F offset, MHz = undervolt at the locked clock:
+rem Core clock V/F offset, MHz = undervolt at the locked clock (=0 sets exactly 0; 0 = leave alone):
 set COFFSET=
 rem Memory clock offset, MHz, may be negative (NVIDIA driver 555+):
 set MOFFSET=
 rem Power limit, W:
 set PLIMIT=
 rem 1 = undervolt auto-tuner (--auto-uv): finds the highest stable core offset itself, at a locked core clock
-rem (set LOCK_CCLOCK). The first start tunes ~10-15 min before mining, later starts reuse the saved result.
+rem (set LOCK_CCLOCK). The first start tunes ~5-12 min before mining, later starts reuse the saved result.
 set AUTO_UV=
+rem 1 = --auto-lock: ffgs chooses the core clock lock of each NVIDIA GPU itself (Administrator; turns on
+rem AUTO_UV): the first start measures the locks (~45-90 min per GPU while the others mine), later starts reuse
+rem the result. A GPU with a LOCK_CCLOCK value keeps it and is not swept.
+set AUTO_LOCK=
+rem Temperature limit in C, e.g. 80 (mainly LAPTOPS / mobile GPUs, whose fans cannot be set): less work when
+rem hotter, no Administrator needed. One value or a list in DEVICES order. Empty = off.
+set TEMP_LIMIT=
+rem Local read-only stats API port, e.g. 4068 (http://127.0.0.1:4068/summary, /gpus, /metrics). Empty = off.
+set API=
 rem 1 = when clock settings are set and this window is not elevated, ask Windows to reopen it as Administrator
 set AUTO_ELEVATE=1
 
@@ -45,7 +54,10 @@ if not "%COFFSET%"=="" set ARGS=%ARGS% --coffset %COFFSET%
 if not "%MOFFSET%"=="" set ARGS=%ARGS% --moffset %MOFFSET%
 if not "%PLIMIT%"=="" set ARGS=%ARGS% --plimit %PLIMIT%
 if "%AUTO_UV%"=="1" set ARGS=%ARGS% --auto-uv
-set OC=%LOCK_CCLOCK%%LOCK_MCLOCK%%COFFSET%%MOFFSET%%PLIMIT%%AUTO_UV%
+if "%AUTO_LOCK%"=="1" set ARGS=%ARGS% --auto-lock
+if not "%TEMP_LIMIT%"=="" set ARGS=%ARGS% --temp-limit %TEMP_LIMIT%
+if not "%API%"=="" set ARGS=%ARGS% --api %API%
+set OC=%LOCK_CCLOCK%%LOCK_MCLOCK%%COFFSET%%MOFFSET%%PLIMIT%%AUTO_UV%%AUTO_LOCK%
 if "%OC%"=="" goto run
 net session >nul 2>&1
 if not errorlevel 1 goto run

@@ -48,7 +48,16 @@ A SASEUL address is 44 hex characters (`5a00b883bd62…94ea`). Get one in the of
 | `--coffset MHz[,MHz…]` (alias `--uv-offset`) | core clock V/F offset = undervolt at the locked clock |
 | `--moffset MHz[,MHz…]` | memory clock offset, may be negative (NVIDIA driver 555+) |
 | `--plimit W[,W…]` | power limit |
+| `--dry-run` | print the per-GPU settings the options give and exit; nothing is changed (5a, new in 0.5.4) |
 | `--oc-info` | clocks, offsets and power limits of the selected GPUs, then exit (no root needed) |
+| `--auto-uv`, `--uv-min/--uv-max/--uv-step MHz[,…]`, `--uv-coarse MHz`, `--uv-reset`, `--uv-reset-all`, `--uv-reval-hours H` | undervolt auto-tuner, see 5c |
+| `--auto-lock`, `--auto-lock-range`, `--auto-lock-max-loss PCT`, `--auto-lock-goal eff\|speed`, `--auto-lock-reset` | core clock lock chosen per GPU, see 5e (new in 0.5.4) |
+| `--temp-limit C[,C…]`, `--temp-stop`, `--temp-mem`, `--temp-hotspot`, `--temp-no-clocks` | temperature protection, mainly for laptops, see 5f (new in 0.5.4) |
+| `--watchdog-hang S`, `--watchdog-drop PCT`, `--watchdog-minutes M`, `--no-watchdog` | GPU stall watchdog, see 5g (new in 0.5.4) |
+| `--failback-minutes N`, `--noshare-minutes M`, `--reject-minutes K` | pool health: back to the primary pool, no-accepted-shares watchdog, see 3c (new in 0.5.4) |
+| `--api [HOST:]PORT`, `--api-hosts NAME[,…]` | local read-only HTTP/JSON API, see 3d (new in 0.5.4) |
+| `--install-autostart` (`--task-name`, `--autostart-delay`, `--autostart-bat`, `--autostart-ac-only`, `--task-user`, `--autostart-limited`), `--remove-autostart` | Windows: start `start.bat` at logon, see 3e (new in 0.5.4) |
+| `--no-update-check`, `--check-update` | the new-version notice off / check once and exit, see 3e (new in 0.5.4) |
 | `--log FILE` | also append the log to FILE (plain text unless `--color always`; the Windows start scripts use `logs\ffgs.log`) |
 | `--color auto\|always\|never` | console colors, see 3a (default `auto`) |
 | `--no-color` | = `--color never` |
@@ -83,7 +92,8 @@ One meaning per color, the same in the log lines, the 10 s status line and the 6
 | GPU temperature (table) | green below 70 °C, yellow 70–79 °C, red from 80 °C |
 | totals: the `rig` row, the table title | bold |
 | stale / dropped / low-diff share, waiting for a job, switching server, pool stats not updated | yellow |
-| rejected share, errors, hardware errors, connection lost, `OFFLINE` / `pool offline` | red |
+| expected outcomes of auto-uv / auto-lock (0.5.4): a failed tuning step or quick check (`step +360 (3/7): FAILED (...)`), `edge found`, `tuning again`, a lock whose tuning failed; clocks changed by another tool and set again (`... by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied`, 5a) | orange (256-colour 208; yellow on the Linux text console and terminals without 256 colours) |
+| what needs your attention: rejected share, errors, hardware errors, connection lost, `OFFLINE` / `pool offline`, a GPU that crashed while mining, is left out or cannot be opened, a final auto-uv `RESULT: FAILED` | red |
 | new block height, share difficulty / divisor changes | cyan |
 | dev fee minute (its share lines and status lines) | dim |
 | timestamps, the table's column titles | gray |
@@ -117,6 +127,177 @@ same): `sl.kasplay.online:3333`, statistics and wallet lookup at **https://kavat
 - The console's `pool` line shows the pool's view of your wallet: 10-min hashrate, balance, paid, immature blocks.
 - The dev fee minute is mined on the same pool for the ffgs dev wallet (no second connection to another pool).
 
+### 3c. Pool health: back to the primary pool, no-accepted-shares watchdog (new in 0.5.4)
+`--pool` with several entries of one protocol is a failover list; **the first entry is the primary pool**:
+
+    ./ffgs --pool sl.kasplay.online:3333,nl.rabbitminer.cc:1931 --wallet ADDRESS.WORKER
+
+Up to 0.5.3 ffgs moved to the next entry when a pool could not be reached, but stayed on the backup until that one
+failed too (saseulmine, saseulpool), and a pool that took the connection but credited nothing was never left.
+
+**Back to the primary (failback).** While ffgs mines on a backup entry, the primary is checked every
+`--failback-minutes` (default **10**) on a *separate* connection; mining is not touched and nothing is submitted:
+
+| protocol | check |
+|---|---|
+| rabbitminer (`HOST:PORT`: Kavatar, rabbitminer.cc, solo proxy) | connect, login (same wallet.worker), one `getjob` with a usable job |
+| saseulmine (`https://`) | one signed `GET /mine` (the request the miner polls with anyway) with a usable job |
+| saseulpool (`nats://`) | connect, subscribe, one block template within 25 s; servers learned from the cluster count as the same pool |
+
+After **2 good checks in a row** (the second one 60 s after the first) ffgs switches back: the job is withdrawn, the GPUs
+finish their current launches, the shares found meanwhile are sent to the backup (saseulpool: until the server confirmed
+them), then the connection goes to the primary. The GPUs wait about 1–2 s during the switch. Log:
+
+    [user] failback: the primary pool answers again (check 1 of 2), checking again in 60 s
+    [user] the primary pool answered 2 checks in a row: switching back to it (from nl.rabbitminer.cc:1931)
+
+`--failback-minutes 0` turns it off. A failed check is logged (`the primary pool is still not usable (...)`).
+
+**No accepted shares (watchdog).** Connected, hashing, but the pool accepts nothing:
+- no accepted share for **max(`--noshare-minutes` (15), 10 × the expected share interval)** — the expected number of
+  shares comes from the measured hashrate and the pool's share difficulty, so at 15 s per share the window is 15 min,
+  at 5 min per share 50 min;
+- or **only rejects for `--reject-minutes` (5)** (at least 5 rejected, none accepted);
+- or connected but **no usable job for 5 min**.
+
+The first time ffgs reconnects to the same pool; if it happens again on the new connection, it moves to the **next
+entry** of `--pool` (after the last one: the first). The reason is logged (`[user] watchdog: no accepted share for 15.0
+min while ~60 were expected (...): reconnecting`). `--noshare-minutes 0` / `--reject-minutes 0` turn the parts off.
+
+The watchdog does **not** act: while the GPUs do not hash for your pool (auto-uv tuning / checks — only the measured
+hashrate counts —, no job, disconnected, switching); during the dev fee / referral minute and the 10 s after it; in
+**solo / own node** mode (a `HOST:PORT` list without Kavatar / rabbitminer.cc); when the GPUs found **no share at all**
+although ~10 were expected (a GPU problem, not the pool's: a warning, the pool stays). A primary that the watchdog left
+is checked less often each time: ×2 up to ×16 of `--failback-minutes`, back to normal after 2 h on it. On saseulpool
+"accepted" means *delivered* (6b), so the watchdog sees a dead server, not a pool that silently ignores shares.
+
+- The fee and referral sessions that mine on your own pool list **follow your session** to the entry it uses (at most
+  once per minute, never inside their own minute); the fee minute itself is unchanged. Their other sessions (Kavatar for
+  an own-wallet referrer; saseulmine / rabbitminer.cc / Kavatar for solo) fail back on their own.
+- A rabbitminer pool that takes the connection but **refuses the login** now makes the next attempt start with the next
+  entry. The 60 s table title shows `…, backup pool 2 of 2` while on a backup. saseulpool: a lost server is replaced by
+  another server of the same cluster first, the next `--pool` entry after.
+
+### 3d. Local API `--api` (new in 0.5.4)
+A read-only HTTP/JSON API for your own monitoring:
+
+    ffgs --wallet ADDRESS ... --api 4068               # http://127.0.0.1:4068 (this machine only)
+    ffgs --wallet ADDRESS ... --api 0.0.0.0:4068       # every interface: other machines on the LAN can read it
+    ffgs --wallet ADDRESS ... --api 192.168.1.20:4068  # one interface
+    ffgs --wallet ADDRESS ... --api [::1]:4068         # IPv6
+
+- Default host `127.0.0.1`. Another address must be written explicitly; a non-loopback one gets a yellow warning
+  (anyone who can reach it can read the rig's stats: firewall it). The log shows
+  `API: listening on http://127.0.0.1:4068 (read-only: /summary, /gpus, /metrics)`.
+- A bad `--api` value stops ffgs at once (exit 1). A busy port does **not** stop mining (`... - mining without the API`).
+- **Security:** only `GET` and `HEAD` (anything else `405`), no write or control endpoints, no authentication. Never in
+  a reply: pool passwords, the saseulmine client key, the solo proxy token; shown: wallet, worker, referrer (public
+  addresses). One small thread (at most 16 connections, 4 KiB request head, 5 s per connection) serves a copy of the
+  stats refreshed every 10 s; it never touches a GPU, NVML or a pool. No CORS headers.
+- **Host-header whitelist** (DNS rebinding: a web page whose name points at the rig must not read it): allowed Host =
+  `localhost`, `127.0.0.1`, `[::1]`, the bound address, any IP literal when bound to `0.0.0.0` / `[::]`, plus the names
+  given with **`--api-hosts NAME[,NAME…]`**. Other Host headers get `403`; a request without a Host header is served.
+
+| Path | Type | What |
+|---|---|---|
+| `GET /`, `GET /summary` | JSON | rig summary |
+| `GET /gpus` | JSON | one object per GPU |
+| `GET /metrics` | Prometheus text 0.0.4 | rig + per-GPU metrics (hashrates in H/s) |
+
+Values are refreshed every 10 s; `updated_s_ago` tells their age; unknown values are `null` (temperature on AMD, watts
+without NVML). Errors are JSON (`{"api_version":1,"error":{"code":404,"message":"..."}}`); before the first stats:
+`503` with `Retry-After: 10`. `api_version` changes only on an incompatible change; new fields can be added.
+
+- `/summary`: `version`, `uptime_s`, `pool` (`protocol` `rabbitminer` / `saseulmine` / `saseulpool`; `url` the host the
+  session is connected to now; `index` the position of the current failback entry in your `--pool` list (0-based),
+  `count`; `connected`, `height`, difficulties, `latency_ms`; `pool_side` the pool's own view of your wallet;
+  `failback` below), `wallet` / `worker` / `referrer`, `hashrate` (`ghs_10s`, `ghs_5min`, `ghs_smooth` = the status
+  line / HiveOS value), `power_w` / `mhs_per_w` (only when every GPU reports power), `shares` (your session; on
+  saseulpool `accepted` = delivered, `shares_delivered_only: true`), `fee` (`phase` `user` / `dev` / `referral`, the
+  next fee minute), `gpu_count`.
+- `pool.failback`: `{"enabled":true,"entry":1,"entries":2,"on_backup":true,"next_check_s":540,"good_checks":0,
+  "interval_x":1,"watchdog":{"enabled":true,"mined_s":600,"expected_shares":40.0,"strikes":0}}` (`next_check_s` null
+  when no check is due) — see 3c.
+- `/gpus`: per GPU `index` (ffgs / nvidia-smi / HiveOS number), `bus`, `name`, `state` (`mining`; `auto-uv` = paused
+  for its own tuning / check; `stopped` = its worker stopped on a GPU error, `error` says why; `left_out`), `hashrate`,
+  `power_w`, `mhs_per_w`, `temp_c`, `fan_pct`, `fan_rpm`, `core_mhz`, `mem_mhz`, `offsets` (NVML: NVIDIA only),
+  `set_by_ffgs`, `auto_uv` (`null` unless auto-uv manages the GPU; `phase` `tuning` / `check` / `mining`, `status`,
+  `step` / `steps`, `offset`, `eta_s`, `result`), `hw_errors`, `shares.found`, and:
+  - `throttle`: `{"reasons":["power_cap","hw_thermal"],"hw":true}` (NVIDIA, `null` otherwise); reasons `idle`,
+    `app_clocks`, `power_cap`, `hw_slowdown`, `sync_boost`, `sw_thermal`, `hw_thermal`, `hw_power_brake`,
+    `display_clock`; `hw` = HW slowdown / SW or HW thermal slowdown / power brake;
+  - `watchdog` (5g): `{"on":true,"hangs":0,"slowdowns":0,"worker_restarts":0,"slow_under_hw_throttle":0,"held":false,
+    "baseline_ghs":5.3}` or `{"on":false}`;
+  - `auto_lock` (5e): `null` without `--auto-lock`, else `{"swept":true,"phase":"sweeping","note":...,"lock":1700,
+    "choice":1700,"status":"auto-lock 1700, 2/7: measuring"}` — `phase` one of `sweeping`, `done`, `saved`, `fallback`,
+    `aborted`, `skipped`; `lock`, `choice`, `status` may be `null`;
+  - `temp_limit` (5f): `null` or `{"limit_c":80,"stop_c":90,"state":"limited","work_pct":72,"clock_mhz":null,
+    "temp_c":78,"throttled_s":750,"stops":1}` — `state` `full`, `limited` or `stopped`.
+- `/metrics`: `ffgs_info{version,backend,pool,protocol,wallet,worker}`, `ffgs_uptime_seconds`, `ffgs_stats_age_seconds`,
+  `ffgs_pool_connected`, `ffgs_hashrate_hs{window}`, `ffgs_power_watts`, `ffgs_shares_total{session,result}`,
+  `ffgs_blocks_total`, `ffgs_fee_active{kind}`, and per GPU (`gpu`, `bus`, `name` labels) `ffgs_gpu_up`,
+  `ffgs_gpu_hashrate_hs{window}`, `ffgs_gpu_power_watts`, `ffgs_gpu_temperature_celsius`, `ffgs_gpu_fan_percent`,
+  `ffgs_gpu_clock_mhz{clock}`, `ffgs_gpu_hw_errors_total`, `ffgs_gpu_shares_found_total`.
+
+Examples:
+
+    curl -s http://127.0.0.1:4068/summary | jq '.hashrate, .shares'
+    curl -s http://127.0.0.1:4068/gpus | jq -r '.gpus[] | "\(.index) \(.name) \(.hashrate.ghs_5min) GH/s \(.temp_c) C \(.state)"'
+
+PowerShell: `Invoke-RestMethod http://127.0.0.1:4068/summary`. Prometheus, scraping the rigs by name:
+
+    scrape_configs:
+      - job_name: ffgs
+        scrape_interval: 15s
+        static_configs: [{targets: ["rig1:4068", "rig2:4068"]}]
+    # rig1 runs ffgs ... --api 0.0.0.0:4068 --api-hosts rig1 (rig2 the same with rig2); IP targets need no --api-hosts
+
+- **HiveOS:** add `--api 4068` to *Extra config arguments*; `h-stats.sh` then reads hashrates, uptime, shares and watts
+  from the API (it finds the address in the log; without an answer within 2 s or with stats older than 60 s it reads
+  the log as before). On a mixed NVIDIA + AMD rig `h-run.sh` gives the AMD process `--api PORT+1` (the host is kept) and
+  h-stats reads both.
+- **Windows:** `set API=4068` in the start scripts.
+
+### 3e. Windows autostart, new-version notice (new in 0.5.4)
+**Autostart.** Double-click **`install-autostart.bat`** in the ffgs folder (after setting up `start.bat`); Windows asks
+for Administrator once. It creates the Task Scheduler task `ffgs`, which runs the `start.bat` of this folder at **your**
+logon, 30 s after it, in the usual miner window on your desktop, with the highest privileges (`LOCK_CCLOCK` /
+`COFFSET` / `AUTO_UV` / `AUTO_LOCK` work without a UAC prompt). A second start while it runs is ignored; it starts on
+battery too and keeps running when the cable is pulled; no time limit (Task Scheduler's default is 72 h); normal
+priority. Settings at the top of `install-autostart.bat`: `TASK` (task name), `DELAY` (seconds after logon, 0 = at
+once), `AC_ONLY=1` (laptops: do not start on battery). Run it again after changing them or moving the folder (the ffgs
+task is replaced). **`remove-autostart.bat`** removes it (an open miner window keeps running).
+
+From an Administrator console:
+
+    ffgs --install-autostart [--task-name NAME] [--autostart-delay S] [--autostart-bat PATH] [--autostart-ac-only]
+                             [--task-user DOMAIN\USER] [--autostart-limited]
+    ffgs --remove-autostart [--task-name NAME]
+
+- `--autostart-bat`: default `start.bat` next to `ffgs.exe` (use it for `start-saseulmine.bat` etc.). `--task-user`:
+  whose logon starts it (default: the user running ffgs; the .bat passes the user who double-clicked it).
+  `--autostart-limited`: without Administrator and without the highest privileges (`start.bat` with clock settings and
+  `AUTO_ELEVATE=1` then asks for Administrator at each logon).
+- Only a task created by ffgs is replaced or removed; a task of the same name made otherwise is left alone with a
+  message. Do not also put `start.bat` in the Startup folder (two miners).
+- Laptops: mining on battery drains it fast, but stopping the task when the cable is pulled would not reliably stop the
+  miner and Task Scheduler would not start it again; so it never stops; `AC_ONLY=1` only skips a start on battery.
+- Linux: `--install-autostart` prints a hint. HiveOS starts and restarts the miner itself; plain Linux: a systemd
+  service with `Restart=always` (example in `docs/0.5.4-winauto-update.md` of the source repository).
+
+**Start script settings (0.5.4).** Besides `AUTO_UV`: `AUTO_LOCK=1` (`--auto-lock`, 5e; counts as a clock setting for
+`AUTO_ELEVATE`), `TEMP_LIMIT=80` (`--temp-limit`, 5f; no Administrator needed), `API=4068` (`--api`, 3d).
+
+**New-version notice.** While mining, about a minute after the start and then about every 12 h (random spread), ffgs
+asks GitHub for the latest release of `pepsykolya/FreeForGemSaseul` and, when it is newer, logs (yellow)
+`ffgs 0.5.5 is available: https://github.com/pepsykolya/FreeForGemSaseul/releases/tag/v0.5.5 (this is 0.5.4; ...)`.
+- One plain `GET https://api.github.com/repos/pepsykolya/FreeForGemSaseul/releases/latest` with `User-Agent:
+  ffgs/<version>`; no wallet, worker, GPU or other identifier is sent. Nothing is downloaded or installed.
+- In its own thread: GitHub unreachable or slow (or its rate limit of 60 requests an hour per IP) → nothing is logged,
+  mining is not affected. Not done in `--selftest`, `--bench`, `--oc-info`, `--pool-test`.
+- `--no-update-check` turns it off (HiveOS: Extra config arguments; Windows: `EXTRA`). `ffgs --check-update` checks
+  once and exits: exit code 0 up to date, 10 newer release, 1 check failed.
+
 ### 4. HiveOS
 See [HIVEOS.md](HIVEOS.md).
 
@@ -124,22 +305,87 @@ See [HIVEOS.md](HIVEOS.md).
 - The PoW is pure compute (no memory traffic): the **memory clock can be lowered** to the minimum to save power.
 - **Default kernel** — highest hashrate per clock. Best when the card is power-limited or the core clock is locked high.
 - **`--eco`** — about 12% fewer GH/s per clock but ~17% less power; best H/W on undervolted cards.
-- RTX 3070 reference points: lock 1560 MHz → 4.78 GH/s at 108 W (default) / 4.21 GH/s at 90 W (`--eco`).
+- **Measured (0.5.3 / 0.5.4, default kernel, Kavatar SL Pool, 40-hex nonces).** GH/s = median of the 10 s status
+  lines after 60 s of mining (≥ 4 min per point), W = NVML board power; the auto-uv offset is what `--auto-uv` found on
+  that card at that lock (voltage floor or edge minus one step). Recommended settings in **bold**.
+
+  **RTX 3070** (HiveOS, driver 580.82.07; Rig01 8 cards, 2–4 cards per lock, median; Rig02 4 cards at 1500: the same
+  5.62 GH/s, 76 W per card):
+
+  | Core lock | Memory | auto-uv offset | GH/s | W | MH/W | W at offset 0 | |
+  |---|---|---|---|---|---|---|---|
+  | 1200 | 810 | +240 … +255 | 4.51 | 65 | 69 | 71 | |
+  | 1300 | 810 | +240 … +255 | 4.90 | 73 | 67 | 84 | |
+  | 1400 | 810 | +255 … +330 | 5.29 | 75 | 70.5 | 88 | |
+  | **1500** | **810** | +330 … +435 | **5.62** | **76** | **73.9** | 98 | **best MH/W** |
+  | 1600 | 810 | +330 … +390 | 6.01 | 89 | 67.5 | 119 | |
+  | **1700** | **810** | +315 … +345 | **6.40** | **106** | **60.4** | 151 | **balance** (best MH/W within −10 % of the top GH/s) |
+  | **1800** | **810** | +330 … +345 | **6.74** | **121** | **55.7** | 186 | **max hashrate** |
+  | 1400 | stock | +300 | 5.29 | 104 | 50.9 | — | memory 810 saves 27 W |
+
+  `--lock-cclock 1500 --lock-mclock 810 --auto-uv` (best MH/W), `1700` (balance), `1800` (max). Cards differ by up to
+  25 % in watts at the same lock (1400: 67–79 W); the hashrate is the same (≈ 3.74 GH/s per 1000 MHz).
+
+  **RTX 3080 Ti** (Windows 10, driver 591.59, PL 350 W, one card; `auto-lock` rows: ffgs's own 120 s measurement):
+
+  | Core lock | Memory | Offset | GH/s | W | MH/W | |
+  |---|---|---|---|---|---|---|
+  | 1200 | 810 | 0 | 7.73 | 137 | 56.5 | |
+  | 1400 | 810 | +120 (auto-uv, floor) | 9.07 | 160 | 56.9 | offset 0: 164 W |
+  | 1500 | 810 | 0 | 9.65 | 184 | 52.3 | |
+  | 1560 | 810 | +210 (auto-uv) | 10.03 | 177 | 56.6 | offset 0: 206 W |
+  | **1600** | **810** | +240 (auto-uv) | **10.32** | **180** | **57.4** | **best MH/W** |
+  | 1650 | 810 | 0 | 10.60 | 240 | 44.2 | |
+  | **1700** | **810** | +240 (auto-uv) | **10.98** | **212** | **51.9** | **balance** (`--auto-lock` chose it too) |
+  | 1750 | 810 | 0 | 11.27 | 299 | 37.7 | |
+  | 1800 | 810 | +150 (auto-uv, edge +180) | 11.49 | 268 | 42.9 | |
+  | **not locked** | **810** | 0 | **11.54** | **332** | **34.8** | **max hashrate** (~1800 MHz) |
+  | 1400 | stock | 0 | 9.13 | 221 | 41.3 | memory 810 saves 57 W |
+  | not locked | stock | 0 | 11.13 | 349 | 31.9 | power-limited: slower than with memory 810 |
+
+  `--lock-cclock 1600 --lock-mclock 810 --auto-uv` (best MH/W), `1700` (balance), `--lock-mclock 810` without a core lock
+  (max). Up to 1400 the core voltage is already at its floor (auto-uv: +120, −4 W); the undervolt pays off from ~1500 up.
+
+  **RTX 4070 Laptop** (Windows 11, on AC, no Administrator: no clock control): without a limit 4.80 GH/s, 63 W,
+  **77 MH/W** — the driver itself holds the GPU at 86–87 °C (its thermal slowdown, ~1700 MHz). `--temp-limit` keeps it
+  cooler at a cost (5f): limit 75 → 1.78 GH/s, 38 W, 47 MH/W; limit 70 → 1.5 GH/s, 32 W, 46 MH/W; limit 80 is no use on
+  this laptop (it runs at 86–87 °C anyway, the bursts go hotter). Measured before the 0.5.4 controller retune (soft
+  start, 3-reading stop); the retune is tested on a model of this laptop, not yet on the laptop itself.
+- **Memory clock:** lock it at 810 (`--lock-mclock 810`; CMP 50HX: 5001, 5a). SL needs no memory bandwidth; the stock
+  memory clock only adds watts.
 
 ### 5a. GPU clock control (new in 0.4.0)
-ffgs can set the clocks of the GPUs it mines on, the same way as FreeForGemPear:
+ffgs can set the clocks of the GPUs it mines on:
 
 | Option | What it does |
 |---|---|
 | `--lock-cclock N` | core clock locked to N MHz (`nvidia-smi -lgc N,N`) |
-| `--lock-mclock N` | memory clock locked to N MHz (`nvidia-smi -lmc N,N`); SL needs no memory bandwidth, use the lowest (810 on RTX 30/40) |
+| `--lock-mclock N` | memory clock locked to N MHz (`nvidia-smi -lmc N,N`); SL needs no memory bandwidth, use the lowest (810 on RTX 30/40). A clock the GPU does not support becomes its lowest supported clock above it (0.5.3; CMP 50HX has no 810: `memory clock 810 not supported, using 5001 (lowest supported)`) |
 | `--coffset N` / `--uv-offset N` | core clock V/F offset in MHz: at a locked core clock a positive offset means the same clock at a lower voltage (undervolt) |
 | `--moffset N` | memory clock offset in MHz, may be negative (driver 555+) |
 | `--plimit W` | power limit in W |
 
-- One value applies to every mining GPU; a comma list gives one value per GPU in `--devices` order. An empty entry,
-  `-` or `0` leaves that GPU's setting alone: `--devices 0,1,2 --lock-cclock 1400,,1560`. (So `0` cannot be used to
-  set an offset of exactly 0; without `--coffset` the offset is simply not touched.)
+- One value applies to every mining GPU; a comma list gives one value per GPU in `--devices` order (without
+  `--devices`: every GPU in nvidia-smi / HiveOS order; with `--devices 2,0` the first value is for GPU2). An empty entry,
+  `-`, `0` or `x` (also `X`, `skip`) leaves that GPU's setting alone: `--devices 0,1,2 --lock-cclock 1400,,1560`.
+- **A shorter list repeats its last value** for the remaining GPUs (the HiveOS OC rule, 0.5.4; a log line says so:
+  `--lock-cclock: 2 values for 3 GPUs: the last one (1500) also applies to the remaining 1 GPU (HiveOS rule)`). More
+  values than GPUs, a value that is not a number or out of range: an error at start (exit 1, nothing changed). Write
+  lists **without spaces** (HiveOS and the start scripts split arguments at spaces).
+- **`=0` sets an offset to exactly 0** (`--coffset`, `--moffset` only; 0.5.4): `--coffset 325,=0`. A plain `0` keeps
+  meaning "leave alone" (in a HiveOS OC profile `0` means "set 0"; here write `=0`). Without `--coffset` the offset is
+  not touched at all.
+- The same list rule holds for `--uv-min` / `--uv-max` / `--uv-step` (5c) and `--temp-limit` (5f).
+- **Start-up lines (0.5.4):** one line per GPU with what this run sets on it (core / memory lock, offsets, power limit,
+  auto-uv range, and with `--auto-lock` whether that GPU's lock is swept):
+
+      per-GPU settings (--devices order; applied below, each with its read-back):
+        GPU0 (RTX 3070): core lock 1500 MHz, memory lock 810 MHz, core offset +325 MHz, auto-uv from auto up to +400, step 15
+        GPU1 (CMP 50HX): core lock 1600 MHz, memory lock 810 MHz, auto-uv from auto up to +495, step 15
+
+  (`--lock-cclock 1500,1600 --lock-mclock 810 --coffset 325,x --auto-uv --uv-max 400,495` on a mixed rig.)
+- **`--dry-run`** prints these lines and exits; nothing is changed (no root needed; no GPU needed with `--devices`). On
+  the rig it also shows the memory clock fallback of each GPU (`memory lock 810 MHz (not supported here: 5001)`).
 - Needs **root** (Linux) / **Administrator** (Windows). Without it ffgs prints one line
   (`needs root …` / `needs Administrator …`) and mines at the current clocks.
 - Applied before the start-up self-test (so the kernel is checked at the new clocks); every value is logged with its
@@ -153,39 +399,265 @@ ffgs can set the clocks of the GPUs it mines on, the same way as FreeForGemPear:
 - Only GPUs in `--devices` are touched; GPUs are matched to NVML by PCI bus id. NVML is loaded at run time
   (`libnvidia-ml.so.1` / `nvml.dll`); without it ffgs still mines.
 - `--oc-info` prints the current clocks, offsets (with the allowed range) and power limits, without changing anything.
-- **Do not combine with other OC tools on the same GPU** (HiveOS OC profile, MSI Afterburner, `nvidia-smi` in a
-  service): on exit ffgs resets the locks it set, which also removes a lock that the other tool had set before.
+- **ffgs's clock options win over other OC tools (0.5.4).** A value ffgs sets on a GPU (`--lock-cclock`,
+  `--lock-mclock`, `--coffset`, `--moffset`, `--plimit`, the offset of `--auto-uv`, the lock of `--auto-lock`) is kept
+  **even if the HiveOS OC profile has other values** (HiveOS applies its OC after a reboot or an OC change, possibly
+  after ffgs started; MSI Afterburner / `nvidia-smi` the same). In its 10 s status tick ffgs compares the clocks,
+  offsets and power limit it reads anyway for the status line with its own values; on a difference it sets its own
+  again (lock first, then the offset; a higher clock or offset than ours first pauses that GPU's work for a moment).
+  One orange line per event, at most one per 10 min per GPU with the count in between:
+  `GPU0: core clock changed to 1680 MHz by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied
+  with the GPU paused`; the clocks table shows `re-applied Nx`. An auto-uv check or auto-lock measurement that ran
+  across such a change is discarded and repeated. A GPU that crashes (Xid) while another tool changes its clocks
+  (within 30 s of such an event on it, 15 s on any GPU of the rig, or with an offset / clock different from ffgs's at
+  the crash) is not counted against its undervolt: orange line `... crashed (Xid 43) while another tool changed its
+  clocks (HiveOS OC?): ... - not counted against the undervolt`, ffgs restarts as usual. When only an offset is seen
+  changed, ffgs also sets its lock again first (the other tool's lock may already be on). A lock cannot be read back, so it is seen from the clock: above our
+  lock, or clearly below it while hashing without a power / thermal reason and not slowed down by `--temp-limit`
+  (2 readings in a row). GPUs and values ffgs does not set (`x`, no option) are left to HiveOS / the other tool.
+  The table and HiveOS h-stats show the clocks the GPU really runs at. Cost: a few µs per GPU and tick (no extra
+  thread; with `--plimit` one power-limit read).
+- **On exit** ffgs puts back what it found at **its** start (offsets, power limit) and resets the locks it set. If
+  HiveOS applied its OC after ffgs started, that is the state before HiveOS's OC, not the OC profile; HiveOS applies its
+  OC again at the next miner start.
 - Windows: set `LOCK_CCLOCK`, `LOCK_MCLOCK`, `COFFSET`, `MOFFSET`, `PLIMIT` in `start.bat` / `start-saseulmine.bat` /
-  `start-saseulpool.bat`.
+  `start-saseulpool.bat` (lists as above, e.g. `set COFFSET=325,x`; `--uv-*` lists go into `EXTRA`).
   With any of them set, the script asks Windows to reopen itself as Administrator (`AUTO_ELEVATE=1`, the default).
 
-**RTX 3070, measured (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5.05 GH/s at 74 W (68 MH/W)** on 40-hex pools (Kavatar, saseulmine, solo), 4.65 GH/s on 16-hex pools;
-`--lock-cclock 1560` gives ~5.1 GH/s at ~110 W. See the README tuning table.
+**Measured settings per GPU** (RTX 3070, RTX 3080 Ti, RTX 4070 Laptop): the tables in section 5 above. RTX 3070:
+`--lock-cclock 1500 --lock-mclock 810 --auto-uv` for the best MH/W.
 
-### 5c. Undervolt auto-tuner `--auto-uv` (new in 0.5.1)
-ffgs finds the undervolt itself (the same tuner as FreeForGemPear): it raises the core V/F offset of each NVIDIA GPU in
-15 MHz steps, checks every step and keeps the last good step minus one step of margin.
+### 5c. Undervolt auto-tuner `--auto-uv` (new in 0.5.1, per clock lock since 0.5.3)
+ffgs finds the undervolt itself: it raises the core V/F offset of each NVIDIA GPU,
+checks every step and keeps the last good offset minus one 15 MHz step of margin.
 
-    sudo ./ffgs --wallet <address>.<worker> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+    sudo ./ffgs --wallet <address>.<worker> --lock-cclock 1500 --lock-mclock 810 --auto-uv
 
-- **Use it at a locked core clock** (`--lock-cclock`, or the lock of the HiveOS OC profile): then a higher offset means
-  the same clock at a lower voltage. NVIDIA only, needs root / Administrator.
-- **First start:** a warm-up check at the start offset (2 min), then 30 s per step up to `--uv-max`, then a 2 min
-  confirmation; all GPUs at once, mining starts after (~10–15 min). **Later starts:** the saved offset after a 20 s check.
+- **Use it at a locked core clock** (`--lock-cclock`, or the lock of the HiveOS OC profile, or `--auto-lock`, 5e): then
+  a higher offset means the same clock at a lower voltage. NVIDIA only, needs root / Administrator.
+- **Coarse to fine (0.5.4):** the offset climbs in **30 MHz** steps (`--uv-coarse`). When a step fails, the tuner goes
+  back to the last good offset and checks the **15 MHz** point inside that one 30 MHz interval (one extra step), then
+  keeps one 15 MHz step of margin. The result is the same 15 MHz edge a 15 MHz climb finds, with about half the steps.
+  (Starting at the top and going down was rejected: the first steps would be the ones most likely to crash the GPU.)
+- **A new clock lock starts near a known profile (0.5.4):** when the GPU has a verified profile of a higher (or the
+  same) core clock lock with the same memory lock, the start is **that profile's offset minus 30** instead of +120 (the
+  nearest such lock counts; lower locks hold higher offsets). The warm-up checks that start as always. Not used with
+  `--uv-min`, after a crash, when it would not raise the start, or when that profile ended on the **voltage floor** or
+  at its own start (a lower clock reaches the floor even sooner: carrying that offset down only eats margin; logged:
+  `profile 1560/mem810 +210 of a higher clock ended on the voltage floor: not starting from it`).
+- **Tuning:** a warm-up check at the start offset (2 min), then ~30 s per step, then a 2 min confirmation: typically
+  **~3.5–11.5 min** (the fixed part, warm-up + confirmation, is ~4.3 min; a second lock with a known profile of a higher
+  lock ~6.5 min; 0.5.3 needed up to ~16.5 min). **Only the GPU being tuned waits; the other GPUs mine meanwhile**, and
+  each GPU mines as soon as its own tuning is over (0.5.3; before, every GPU waited for all). The log shows the progress
+  (`step +340 (2/12): ok`), the status line a tag after that GPU's hashrate (`GPU1 0.000 [tuning +340, step 2/12]`),
+  and about once a minute a summary (`auto-uv: tuning 2 GPU(s) (GPU1, GPU3), ~6 min left`). The tuning ends with a
+  `RESULT:` line. Colours (with `--color`): progress cyan, passed checks / results green, step-backs yellow, failures red.
+- **The voltage floor:** when two steps in a row each save too little (0.5 W per 15 MHz, i.e. < 1 W for a 30 MHz step),
+  the search stops below them instead of climbing to `--uv-max` (the voltage is at its floor; more offset only eats the
+  margin; the result is the good offset before the two flat steps). If the search reaches
+  `--uv-max` without a failure, the log says so with the power saved.
+- **A start offset that fails** its check is never kept: ffgs goes down in 30 MHz steps to the first offset that passes
+  and mines there (also below your own offset).
+- **Profiles per clock lock (0.5.3):** the result is saved per GPU, board, driver **and core clock lock** (`1400/mem810`
+  = `--lock-cclock 1400 --lock-mclock 810`; without a ffgs lock, the core clock under mining load picks the profile,
+  `~1410`). Switching the lock and back reuses each lock's profile. A profile verified within `--uv-reval-hours` is
+  **applied at once** (the GPU mines immediately); an older one, one from another ffgs version, or one lowered after a
+  crash gets a 20 s check first (only that GPU waits). A profile without check counts of this ffgs version (from 0.5.1 /
+  0.5.2, another ffgs version, another `--blocks` / `--threads`) first gets a new 60 s reference at its floor, then the
+  20 s check: ~85 s; the status tag shows `[reference +240]`, then `[check +300]`, and the log says so. Results of 0.5.1 /
+  0.5.2 become the profile of the clock they were tuned at and are used for a lock close to it after a check.
 - **The check** runs the mining kernel at full load in a separate process on fixed test jobs: the number of candidates of
   every launch must be exactly the reference (a GPU that computes even one hash wrong changes it within seconds) and every
   stored candidate is re-hashed on the CPU. A crash or hang of the GPU only kills that process.
-- **While mining:** a hardware error (bad candidate) steps the GPU back by 15 MHz (saved); every 6 h a 20 s re-check
-  (that GPU pauses for it). If something else changes the offset (HiveOS OC), auto-uv leaves that GPU alone.
-- Saved in `ffgs-uv-results.txt` next to the binary (HiveOS: `/hive-config/ffgs`, kept over miner updates), per GPU, board
-  and driver. If ffgs dies during a step (kill, Xid, power), the next start puts the offset back and tunes below that step.
-  The original offset is restored on exit like with `--coffset`.
-- Options: `--uv-min MHz` (search start; default: the current offset, else +120, RTX 40/50 at least +200),
-  `--uv-max MHz` (default +495), `--uv-step MHz` (15), `--uv-reset` (forget the results, tune again),
-  `--uv-reval-hours H` (6, 0 = never). Windows: `AUTO_UV=1` in the start scripts. `--coffset` together with
-  `--auto-uv` = the search starts from that offset.
-- **RTX 3070, measured** (lock 1400/810, start +250): steps up to +385 ok, +400 failed (one candidate missing) →
-  **+370**, 73 W instead of 76 W at +250; on Kavatar 5.04 GH/s, 69 MH/W, 0 rejects.
+- **While mining:** a hardware error (bad candidate) steps the GPU back by 15 MHz (saved, checked again at the next
+  start); every 6 h a 20 s re-check (that GPU pauses for it). If something else changes the offset (HiveOS OC), ffgs sets
+  its own again (5a; since 0.5.4, before: auto-uv let that GPU go). A GPU fault (Xid): see 5d.
+- Saved in `ffgs-uv-results.txt` next to the binary (HiveOS: `/hive-config/ffgs`, kept over miner updates). If ffgs dies
+  during a step (kill, Xid, power), the next start puts the offset back and tunes below that step; stopping ffgs (Ctrl-C,
+  HiveOS miner stop) during a check is not counted as a failure. The original offset is restored on exit like with
+  `--coffset`.
+- Options: `--uv-min MHz` (search start; default: the current offset, else +120, RTX 40/50 at least +200; or the
+  higher-lock hint above), `--uv-max MHz` (default +495), `--uv-step MHz` (15: the **fine** step = precision and margin
+  of the result, confirmation and hardware-error step-backs; an explicit `--uv-step 15` keeps the speed-up),
+  `--uv-coarse MHz` (new in 0.5.4, the climbing step, default 2 × `--uv-step`; `--uv-coarse 15` or anything ≤ the fine
+  step = the 0.5.3 climb), `--uv-reset` (forget the profile of this run's clocks and tune again; the profiles of other
+  locks stay), `--uv-reset-all` (forget every profile of **this run's GPUs**, all locks; since 0.5.4 the lines of other
+  GPUs in the file stay — a mixed rig or two ffgs processes sharing `/hive-config/ffgs` keep each other's profiles),
+  `--uv-reval-hours H` (6, 0 = never). A tuning stopped before its result leaves no line in the file.
+  `--uv-min`, `--uv-max`, `--uv-step` take **per-GPU lists** (0.5.4, the rule of 5a): `auto` = the default, empty / `-` /
+  `x` = **no auto-uv on that GPU** (`--uv-max 400,x`; log: `auto-uv: GPU1 left alone (empty / - / x in a --uv-* list)`).
+  Windows: `AUTO_UV=1` in the start scripts. `--coffset` together with `--auto-uv` = the search starts from that offset.
+  `--uv-reset` / `--uv-reset-all` act once: an own restart after a GPU fault (5d) does not repeat them.
+- Apart from the higher-lock hint the start is not chosen by the lock: the edges differ too much between cards of one
+  type (RTX 3070 at 1700: +345 … +375). The start stays your current offset (e.g. `--coffset 325`); a start that fails
+  costs a few checks, not the tuning. Measured results per lock: the tables in section 5.
+
+### 5d. GPU faults (new in 0.5.3)
+A GPU fault (driver Xid 13 / 43, "an illegal memory access") used to end ffgs, and HiveOS restarted it into the same
+fault. Now:
+- the failing GPU is found from the driver's Xid events and logged: `faults: GPU4 (bus 0000:04:00.0, RTX 3070) FAILED:
+  Xid 43 reported by the driver for this GPU`; it is remembered with its offset in `ffgs-gpu-faults.txt` (next to the
+  binary; HiveOS: `/hive-config/ffgs`);
+- the other GPUs keep mining when they can; when no worker is left (or a GPU hangs, 5g), ffgs puts the clocks back and
+  **restarts itself**, at most 12 times an hour:
+  - Linux: the same process and log (exec); past the limit it exits and HiveOS restarts it as before;
+  - Windows (0.5.4): ffgs exits with code 2 and `start.bat` starts it again in 10 s (all GPUs back in ~20 s). The
+    restart times are kept in `ffgs-restarts.txt` in the state directory (next to `ffgs-uv-results.txt`); a start within
+    120 s of the last one counts as that restart, so the 12-per-hour limit holds: past it ffgs waits until the oldest
+    restart of the hour has aged out, then exits. A start by hand later begins a new count;
+  - `--uv-reset`, `--uv-reset-all` and `--auto-lock-reset` are not repeated on such restarts;
+- **with `--auto-uv`:** a GPU that crashed at its undervolt comes back **30 MHz lower** after a 20 s check (no tuning from
+  scratch; profile updated). A GPU that crashes 2 starts in a row at its own (kept) offset is lowered by 60 MHz per
+  2 crashes, down to 0, then left out;
+- **without `--auto-uv`:** ffgs does not change offsets; a GPU that crashes 2 starts in a row is **left out of mining for
+  an hour** (`... is LEFT OUT of mining ...`), the others mine; when every GPU is left out ffgs waits instead of exiting
+  (no restart loop);
+- **A GPU that cannot be opened (0.5.4)** — `CUDA-capable device(s) is/are busy or unavailable`, often with an Xid 38 at
+  every attempt, e.g. after a fault of the previous miner when it was stopped — is **not** an undervolt or offset fault:
+  nothing is recorded, its offset and auto-uv profile stay. ffgs logs it once (`GPU1 ... cannot be opened (...): likely
+  needs a GPU reset or a reboot; left out, the other GPUs mine ...`), shows `[unavailable]` in the status line
+  (API: `"state":"unavailable"`) and tries again after 1, 5 and 15 min, then every 15 min; it mines as soon as it opens.
+  A tuning or check of that GPU waits the same way and goes on at the same offset. Usually only a reboot frees it.
+- 30 min of mining without a fault clears the count. Deleting `ffgs-gpu-faults.txt` forgets everything at once.
+
+### 5e. Automatic core clock lock `--auto-lock` (new in 0.5.4)
+ffgs picks the core clock lock of each NVIDIA GPU itself: it mines at several locks, each at its own undervolt
+(auto-uv, 5c), measures hashrate and power, and keeps the most efficient lock that loses at most 10 % of the top hashrate.
+
+    sudo ./ffgs --wallet <address>.<worker> --lock-mclock 810 --auto-lock
+
+- **NVIDIA only, root / Administrator.** `--auto-lock` turns on `--auto-uv`. `--lock-mclock`, `--moffset`, `--plimit`
+  work as before (the memory lock is part of the saved key: a different memory lock is swept anew).
+- **`--lock-cclock` together with `--auto-lock`:** a GPU with its own `--lock-cclock` value (one value = every GPU; a
+  per-GPU list = those GPUs) keeps that lock and is **not swept**; the others are. `--lock-cclock 1400,x --auto-lock`
+  sweeps GPU1 only. If every GPU has a value, nothing is swept (a warning; auto-uv tunes each at its lock). A GPU with
+  `x` in a `--uv-*` list (no auto-uv) is not swept either. The start-up per-GPU lines (5a) show it in the `auto-lock`
+  column (`sweeps the core lock`, `off (own --lock-cclock)`, `off (no auto-uv)`).
+- **Locks tried:** by default 1800, 1700 … 1200 MHz, nothing above the card's maximum graphics clock (a card that cannot
+  reach 1600 gets the 5 locks below its maximum). `--auto-lock-range 1200-1700:100` (from-to[:step], step 100 by
+  default) or a list `--auto-lock-range 1300,1450,1600`.
+- **The sweep, highest lock first, per GPU:** set the lock → auto-uv applies the saved profile of that lock at once, or
+  checks / tunes it (a new lock starts from the higher lock's profile minus 30, 5c: **~5–12 min**; **only this GPU
+  pauses**) → the GPU **mines** at it: 45 s to settle, then 120 s measured (GH/s from the GPU's own hash counter,
+  average NVML watts, median core clock). **Shares found while measuring go to the pool as usual.** The other GPUs mine
+  all the time; all GPUs sweep in parallel.
+- **Early stop:** once a lock is more than the allowed loss below the top GH/s, the lower locks are not measured.
+- **Choice:** `--auto-lock-goal eff` (default) = the best MH/W among the locks within `--auto-lock-max-loss` % (10, 0..90)
+  of the highest GH/s measured; `--auto-lock-goal speed` = the highest GH/s.
+- **Points that do not count:** the clock did not hold the lock (median more than max(45 MHz, 3 %) below it: power /
+  thermal limit) → `not valid`; hardware errors while measuring → `not valid` (and auto-uv steps that profile back);
+  no steady mining (no job, pool offline) → measured again up to 3 times, then `not valid`. A lock the driver refuses,
+  a lock where auto-uv finds no passing offset, or a GPU fault (Xid) while mining at it → `FAILED`, next lock lower. If
+  ffgs dies during a lock (Xid, freeze, power cut), the next start marks that lock `crashed` and never tries it again
+  (until `--auto-lock-reset`).
+- **No lock control** (some laptops, old cards): `core clock lock ... not supported on this GPU: fallback to auto-uv at
+  the current clocks`; the GPU mines as with `--auto-uv` alone. No valid lock at all: back to the driver default clocks.
+- **The result** is a table in the log (simulated numbers):
+
+      auto-lock: GPU0 (bus 0000:0D:00.0, RTX 3070) RESULT (goal eff, max loss 10%, top 6.480 GH/s):
+      auto-lock:   lock  offset    GH/s       W   MH/W
+      auto-lock:   1800    +210   6.480   118.4   54.7
+      auto-lock:   1700    +225   6.120   106.2   57.6  ★ chosen
+      auto-lock:   1600    +240   5.760    95.1   60.6
+      auto-lock:   1500       -       -       -      -  skipped: below the cut, not measured
+      auto-lock: GPU0 (bus 0000:0D:00.0, RTX 3070) mining at lock 1700 ★ (saved; --auto-lock-reset to sweep again)
+
+  While it runs, the status line shows a tag after that GPU's hashrate: `GPU0 6.120 [auto-lock 1700, 2/7: measuring]`.
+- **Saved** per GPU, board, driver and memory lock in `ffgs-autolock.txt`, next to `ffgs-uv-results.txt` (HiveOS:
+  `/hive-config/ffgs`). **The next start applies the saved lock at once** (with its auto-uv profile). A changed
+  `--auto-lock-goal` / `--auto-lock-max-loss` is re-chosen from the saved points without measuring; a wider range or a
+  larger loss measures only the missing locks. `--auto-lock-reset` forgets the points and sweeps again (the auto-uv
+  profiles stay; add `--uv-reset` to re-tune every lock of the sweep once). A new driver = a new sweep. An own restart
+  (5d) does not repeat `--auto-lock-reset`.
+- **Time:** the first sweep of a GPU costs, per lock, the auto-uv tuning of a new lock (GPU paused) plus ~3 min of
+  measured mining; with the early stop typically 3–5 locks per GPU, in parallel on all GPUs. Later starts: nothing.
+- **With `--temp-limit`** (5f) the lock auto-lock owns is never lowered (idle gaps / pauses only). The stall watchdog
+  (5g) is held while the lock changes and starts a new baseline at the new lock.
+- **HiveOS:** add `--auto-lock` (and e.g. `--lock-mclock 810`) to *Extra config arguments* and leave the **core clock
+  lock empty in the HiveOS OC profile** (ffgs sets and on exit resets the lock). **Windows:** `set AUTO_LOCK=1` in the
+  start script (it counts as a clock setting for `AUTO_ELEVATE`).
+
+### 5f. Temperature protection `--temp-limit` (new in 0.5.4; mainly for laptops)
+**Meant mainly for laptops and mobile GPUs.** A laptop GPU shares its cooling with the CPU and its fans cannot be set,
+so a long mining run sits at the GPU's own throttle point (~87 °C). `--temp-limit` keeps it cooler by giving it less
+work. Desktop rigs normally keep their temperatures with fans (HiveOS autofan) and do not need this.
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--temp-limit C[,C…]` | keep the GPU at or below C (40..100); one value or a per-GPU list (5a), `0` / empty = off for that GPU | off |
+| `--temp-stop C2[,…]` | hard stop: at C2 (3 readings in a row) the GPU stops mining until it is 6 °C below the limit | min(C+10, 90), at least C+3 |
+| `--temp-mem C[,…]` | memory junction limit, where the driver reports it (stop = it + 10) | C+15 |
+| `--temp-hotspot C[,…]` | hotspot (AMD "junction") limit, where reported (stop = it + 10) | C+15 |
+| `--temp-no-clocks` | never lower the core clock lock, idle gaps only | — |
+
+Example (laptop, Windows, no Administrator): `ffgs.exe --wallet ... --temp-limit 80`, or `set TEMP_LIMIT=80` in the
+start script.
+
+- **Soft start:** mining starts at a work fraction of 30 % and ramps up (no log line unless the GPU gets near its
+  limit; a GPU that stays cool reaches full speed within ~15–30 s). A laptop core sensor follows the power within about
+  a second: a start at 100 % used to overshoot the limit by 15–25 °C.
+- At **C-3** (filtered reading) the GPU enters the limit state; a controller sets the *work fraction* (10–100 %) so the
+  temperature stays at **C-2 .. C-1**. It works on a reading filtered over a few seconds and changes the work fraction
+  slowly (at most +5 % / −20 % per second), so a fast laptop sensor does not make it swing. The work fraction is applied
+  as idle gaps between launches: no admin rights needed, works on laptops whose clocks cannot be set and on AMD.
+- Where ffgs itself locked the core clock (`--lock-cclock`, root / Administrator, NVIDIA) and no core offset of ffgs or
+  auto-uv is on that GPU, it **lowers that lock first** (15 MHz steps, down to 60 % of the lock / at least 800 MHz) and
+  adds idle gaps only below that (a lower clock runs at a lower voltage: less energy per hash than idling). With
+  `--auto-uv` / `--coffset` the lock is never lowered (that offset was found at that lock), nor with `--auto-lock` (5e).
+- **Full speed again** (one log line) after 30 s at full speed with the GPU at or below **C-5**.
+  **Hard stop:** any sensor at its stop temperature for 3 readings in a row (or 5 °C above it at once) → no launches
+  until every sensor is 6 °C below its limit (or 3 °C below once it has been stopped for 60 s: a warm laptop may idle
+  near C-6), then mining resumes at 30 % and ramps up. A single 1-second spike does not stop it.
+- **What it costs — honestly.** Without Administrator rights the only tool is idle gaps, and in its launches the GPU
+  runs at its full boost clock (the driver's own thermal slowdown lets go in the gaps). So the limit lowers the
+  temperature and the noise at the cost of hashrate **and** efficiency. Measured on an RTX 4070 Laptop (Windows, on AC,
+  no admin): no limit 4.80 GH/s, 63 W, **77 MH/W** with the driver holding 86–87 °C itself; `--temp-limit 75` / `70`
+  1.5–1.8 GH/s, 32–38 W, **~47 MH/W** (measured before the 0.5.4 retune of the controller described here; the retune
+  was tested on a model of that laptop). Use it to keep a laptop cooler and quieter, not to mine more per watt. With
+  Administrator / root and `--lock-cclock`, ffgs lowers the clock lock first (next point), which keeps the efficiency
+  much better than idle gaps.
+- **Log:** one line per state change only. The status line shows `GPU0 3.100 [temp-limit 72%]`,
+  `[temp-limit 1290 MHz]` / `[temp-limit 840 MHz 60%]` (lowered lock, + idle gaps) or `[temp-stop 91 C]`; the 60 s table
+  adds `temp-limit 80 C: 72% now, throttled 12m 30s, 1 stop(s)`. HiveOS `h-stats.sh` reads past these tags. The shown
+  and reported hashrate is the real one; while the GPU does not hash (temp-stop, pool offline) it shows 0 and 0.0 MH/W
+  (the table: `-`).
+- **Test hook** `FFGS_TEST_TEMP` (developers only) replaces the temperature *reading*: the real GPU is then not
+  protected at all (it heats up as without a limit). Use it only for short runs on a cool GPU.
+- **Sensors:** NVIDIA (NVML, no root): the core; memory where the card reports it (HBM cards; GeForce usually not); no
+  hotspot in NVML. AMD Linux (amdgpu hwmon): edge, junction (hotspot), mem. AMD Windows: no sensor in this version
+  (`--temp-limit` is off there, logged). The hottest sensor relative to its own limit counts; a GPU with no readable
+  sensor is not limited (logged at start).
+- **With auto-uv:** a check starts only when the paused GPU has cooled to C-10; a check that reaches `--temp-stop` is
+  repeated after cooling; a tuning step that stays too hot ends the search at the last good step (not counted as an
+  edge). The stall watchdog (5g) never judges a GPU that `--temp-limit` throttles or stops. `--bench` and `--selftest`
+  ignore `--temp-limit`.
+
+### 5g. GPU stall watchdog (new in 0.5.4)
+5d acts when a GPU worker **stops** on a CUDA error and the driver reports an Xid. A GPU can also fail quietly: its
+launch never returns (**hang**: no error, no Xid) or it keeps working at a fraction of its speed (**slowdown**).
+
+- **Hang** — a mining worker makes no progress for `--watchdog-hang` seconds (default 60; 180 while it opens the GPU).
+  The GPU is stopped as a fault without an Xid (recorded in `ffgs-gpu-faults.txt` with its offset, as in 5d) and ffgs
+  **restarts itself** even though other GPUs still mine (5d: Linux exec, Windows exit 2 + `start.bat`; at most 12 per
+  hour). The next start acts on the record as for an Xid (with `--auto-uv` 30 MHz lower; without it a GPU that does it
+  2 starts in a row is left out for an hour). Past the 12-per-hour limit the other GPUs keep mining and the hung GPU
+  waits for the next start. AMD: ffgs exits (2) and the start script / HiveOS restarts it.
+- **Slowdown** — the GPU's 10 s hashrate stays below `--watchdog-drop` % (default 30) of its **own** baseline for
+  `--watchdog-minutes` (default 3). Baseline = the median of its last 60 normal 10 s samples (10 min), judged after 5 min
+  of them; low samples never enter it. Action: on an auto-uv tuned offset the offset goes 30 MHz down (re-checked within
+  a minute); that GPU's worker stops, its CUDA context is reset (AMD: the OpenCL context is created again) and a new
+  worker starts; the other GPUs mine on. The 3rd slowdown of a GPU within an hour, a worker that does not stop within
+  30 s, or a GPU that cannot be opened again: handled as a hang.
+- **Not judged** (and 30 s after; 60 s after a worker start): the worker idles (auto-uv check / tuning, no job, pool
+  offline), the dev fee / referral minute, a worker restart; while auto-uv changes an offset or auto-lock changes a lock
+  (a lock change starts a new baseline); a GPU that `--temp-limit` throttles or stops. A slowdown while NVML reports
+  hardware / driver throttling (HW slowdown, thermal, power brake) is **only logged** (once per 10 min): a restart would
+  not help. A slowdown of more than half of the GPUs at once (at least 2) is the rig (CPU, power, host): logged once per
+  10 min, nothing restarted.
+- Options: `--watchdog-hang S` (≥ 10), `--watchdog-drop PCT` (1..95), `--watchdog-minutes M` (≥ 0.5), `--no-watchdog`.
+- Log lines start with `watchdog:` (`HANG`, `SLOW` in red, with the clocks, W and temperature at that moment). The status
+  line shows ` [wd 1h 2s]` after the GPU's hashrate when the watchdog acted on it in this run (h = hangs, s =
+  slowdowns); HiveOS h-stats is unaffected. The API (3d) shows the counters in `watchdog`.
 
 ### 5b. AMD GPUs (new in 0.4.0)
 The same `ffgs` / `ffgs.exe` also mines on AMD Radeon GPUs through OpenCL (tuned for RDNA2):
@@ -399,7 +871,16 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 | `--coffset МГц[,МГц…]` (синоним `--uv-offset`) | V/F-оффсет частоты ядра = андервольт при зафиксированной частоте |
 | `--moffset МГц[,МГц…]` | оффсет частоты памяти, может быть отрицательным (драйвер 555+) |
 | `--plimit Вт[,Вт…]` | лимит мощности |
+| `--dry-run` | напечатать, что опции выставят на каждой GPU, и выйти; ничего не меняется (5a, новое в 0.5.4) |
 | `--oc-info` | частоты, оффсеты и лимиты мощности выбранных GPU, затем выход (root не нужен) |
+| `--auto-uv`, `--uv-min/--uv-max/--uv-step МГц[,…]`, `--uv-coarse МГц`, `--uv-reset`, `--uv-reset-all`, `--uv-reval-hours Ч` | автоподбор андервольта, см. 5c |
+| `--auto-lock`, `--auto-lock-range`, `--auto-lock-max-loss ПРОЦ`, `--auto-lock-goal eff\|speed`, `--auto-lock-reset` | автовыбор фиксации частоты ядра по каждой карте, см. 5e (новое в 0.5.4) |
+| `--temp-limit C[,C…]`, `--temp-stop`, `--temp-mem`, `--temp-hotspot`, `--temp-no-clocks` | защита по температуре, в первую очередь для ноутбуков, см. 5f (новое в 0.5.4) |
+| `--watchdog-hang С`, `--watchdog-drop ПРОЦ`, `--watchdog-minutes М`, `--no-watchdog` | сторож зависания GPU, см. 5g (новое в 0.5.4) |
+| `--failback-minutes N`, `--noshare-minutes M`, `--reject-minutes K` | здоровье пула: возврат на основной пул, сторож «нет принятых шар», см. 3c (новое в 0.5.4) |
+| `--api [ХОСТ:]ПОРТ`, `--api-hosts ИМЯ[,…]` | локальный HTTP/JSON API только для чтения, см. 3d (новое в 0.5.4) |
+| `--install-autostart` (`--task-name`, `--autostart-delay`, `--autostart-bat`, `--autostart-ac-only`, `--task-user`, `--autostart-limited`), `--remove-autostart` | Windows: запуск `start.bat` при входе в систему, см. 3e (новое в 0.5.4) |
+| `--no-update-check`, `--check-update` | выключить уведомление о новой версии / проверить один раз и выйти, см. 3e (новое в 0.5.4) |
 | `--log ФАЙЛ` | дополнительно писать лог в ФАЙЛ (обычный текст, если не `--color always`; bat-файлы Windows пишут в `logs\ffgs.log`) |
 | `--color auto\|always\|never` | цвета в консоли, см. 3a (по умолчанию `auto`) |
 | `--no-color` | = `--color never` |
@@ -425,7 +906,8 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 | температура GPU (таблица) | зелёный ниже 70 °C, жёлтый 70–79 °C, красный от 80 °C |
 | итоги: строка `rig`, заголовок таблицы | жирный |
 | stale / отброшенная / low-diff шара, ожидание задания, смена сервера, статистика пула не обновилась | жёлтый |
-| отклонённая шара, ошибки, hardware error, потеря связи, `OFFLINE` / `pool offline` | красный |
+| ожидаемые исходы auto-uv / auto-lock (0.5.4): неудачный шаг подбора или быстрой проверки (`step +360 (3/7): FAILED (...)`), `edge found`, `tuning again`, фиксация, подбор на которой не удался; частоты, изменённые другой программой и выставленные снова (`... by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied`, 5a) | оранжевый (256-цветный 208; жёлтый в текстовой консоли Linux и терминалах без 256 цветов) |
+| то, что требует внимания: отклонённая шара, ошибки, hardware error, потеря связи, `OFFLINE` / `pool offline`, GPU упал во время майнинга, исключён или не открывается, итоговый `RESULT: FAILED` auto-uv | красный |
 | новая высота блока, смена сложности / делителя шары | голубой |
 | минута комиссии (её шары и строки статуса) | тусклый |
 | время, названия колонок таблицы | серый |
@@ -459,6 +941,134 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 - Строка `pool` в консоли показывает данные пула по вашему кошельку: хэшрейт за 10 мин, баланс, выплачено, несозревшие блоки.
 - Минута комиссии разработчика майнится на том же пуле на dev-кошелёк ffgs (без второго подключения к другому пулу).
 
+### 3c. Здоровье пула: возврат на основной пул, сторож «нет принятых шар» (новое в 0.5.4)
+`--pool` с несколькими адресами одного протокола — список резервных пулов; **первый — основной**:
+
+    ./ffgs --pool sl.kasplay.online:3333,nl.rabbitminer.cc:1931 --wallet АДРЕС.ВОРКЕР
+
+До 0.5.3 ffgs уходил на следующий пул, когда текущий недоступен, но не возвращался (saseulmine, saseulpool), а пул,
+который принимает соединение, но ничего не засчитывает, не покидал никогда.
+
+**Возврат на основной пул.** Пока ffgs майнит на резервном, основной проверяется каждые `--failback-minutes`
+(по умолчанию **10**) *отдельным* соединением; майнинг не трогается, шары не отправляются: rabbitminer — подключение,
+login (тот же wallet.worker), один `getjob` с годным заданием; saseulmine — один подписанный `GET /mine`; saseulpool —
+подключение, подписка, один шаблон блока за 25 с (серверы, узнанные из кластера, — тот же пул). После **2 удачных
+проверок подряд** (вторая через 60 с) — переключение: задание снимается, GPU доделывают текущие запуски, найденные шары
+уходят на резервный (saseulpool — до подтверждения сервером), затем подключение к основному. GPU стоят ~1–2 с. В логе:
+`failback: the primary pool answers again (check 1 of 2) ...`, `the primary pool answered 2 checks in a row: switching
+back to it ...`. `--failback-minutes 0` — выключить.
+
+**Нет принятых шар (сторож).** Подключён, хеширует, но пул ничего не принимает:
+- нет принятой шары **max(`--noshare-minutes` (15), 10 × ожидаемый интервал)** — ожидаемое число шар считается по
+  измеренному хешрейту и сложности шары пула (15 с на шару → окно 15 мин, 5 мин на шару → 50 мин);
+- или **только отказы `--reject-minutes` (5)** мин (не меньше 5 отказов и ни одной принятой);
+- или подключён, но **нет годного задания 5 мин**.
+
+Первый раз — переподключение к тому же пулу; повторилось на новом соединении — **следующий пул** списка (после
+последнего — первый). Причина пишется в лог (`watchdog: …`). `--noshare-minutes 0` / `--reject-minutes 0` — выключить.
+
+Сторож **не срабатывает**: пока GPU не хешируют на ваш пул (подбор / проверка auto-uv — считается только измеренный
+хешрейт; нет задания; нет соединения; переключение); в минуту комиссии / реферала и 10 с после; в режиме **соло / своя
+нода** (список `ХОСТ:ПОРТ` без Kavatar / rabbitminer.cc); если GPU **вообще не нашли шар**, хотя ждали ~10 — это
+проблема GPU, а не пула: предупреждение, пул не меняется. Основной пул, с которого ушёл сторож, проверяется всё реже:
+×2 до ×16 от `--failback-minutes`; после 2 ч на нём — как обычно. На saseulpool «принята» = *доставлена* (6b).
+
+- Сессии комиссии и реферала на вашем же списке пулов **следуют за вашей сессией** на её пул (не чаще раза в минуту и
+  никогда внутри своей минуты); сама минута не меняется. Остальные сессии комиссии (Kavatar при своём кошельке-реферере;
+  saseulmine / rabbitminer.cc / Kavatar для соло) возвращаются на свой основной сами.
+- Пул rabbitminer, принимающий соединение, но **отказывающий в login**, теперь сдвигает следующую попытку на следующий
+  адрес. В таблице раз в 60 с — `…, backup pool 2 of 2`, пока ffgs на резервном. saseulpool: при потере сервера сначала
+  другие серверы того же кластера, потом следующий `--pool`.
+
+### 3d. Локальный API `--api` (новое в 0.5.4)
+HTTP/JSON API только для чтения — для своего мониторинга:
+
+    ffgs --wallet АДРЕС ... --api 4068               # http://127.0.0.1:4068 (только эта машина)
+    ffgs --wallet АДРЕС ... --api 0.0.0.0:4068       # все интерфейсы: читать смогут машины локальной сети
+    ffgs --wallet АДРЕС ... --api 192.168.1.20:4068  # один интерфейс
+    ffgs --wallet АДРЕС ... --api [::1]:4068         # IPv6
+
+- Хост по умолчанию — `127.0.0.1`. Другой адрес — только явно; для не-loopback в логе жёлтое предупреждение (кто
+  достучится до адреса, тот прочитает статистику рига: закройте файрволом). В логе:
+  `API: listening on http://127.0.0.1:4068 (read-only: /summary, /gpus, /metrics)`.
+- Неверное значение `--api` — ffgs сразу выходит (код 1). Занятый порт майнинг **не** останавливает
+  (`... - mining without the API`).
+- **Безопасность:** только `GET` и `HEAD` (остальное — `405`), ни одного эндпоинта записи / управления, без
+  авторизации. В ответах никогда нет паролей пула, ключа клиента saseulmine, токена соло-прокси; есть кошелёк, воркер,
+  реферер (публичные адреса). Один маленький поток (до 16 соединений, 4 КиБ заголовков, 5 с на соединение) отдаёт копию
+  статистики, обновляемую раз в 10 с; к GPU, NVML и пулу не прикасается. Без CORS-заголовков.
+- **Белый список заголовка Host** (защита от DNS rebinding: веб-страница, чьё имя указывает на риг, не должна его
+  читать): разрешены `localhost`, `127.0.0.1`, `[::1]`, адрес, на котором слушает API, любой IP-адрес при `0.0.0.0` /
+  `[::]`, плюс имена из **`--api-hosts ИМЯ[,ИМЯ…]`**. Иной Host — `403`; запрос без заголовка Host обслуживается.
+
+| Путь | Формат | Что |
+|---|---|---|
+| `GET /`, `GET /summary` | JSON | сводка рига |
+| `GET /gpus` | JSON | объект на каждую карту |
+| `GET /metrics` | Prometheus text 0.0.4 | метрики рига и карт (хешрейт в H/s) |
+
+Значения обновляются раз в 10 с; `updated_s_ago` — их возраст; неизвестное — `null` (температура на AMD, ватты без
+NVML). Ошибки — JSON; до первой статистики — `503` с `Retry-After: 10`. `api_version` меняется только при несовместимых
+изменениях. Имена полей — в английском разделе; коротко:
+
+- `/summary`: версия, аптайм, пул (`protocol`, `url` — к какому хосту подключена сессия сейчас, `index` — номер текущего
+  адреса failback в списке `--pool` с 0, `count`, `connected`, высота, сложности, задержка, `pool_side` — данные пула
+  по кошельку), кошелёк / воркер / реферер, хешрейт 10 с / 5 мин / сглаженный, ватты и MH/W, шары вашей сессии
+  (saseulpool: `accepted` = доставлено), комиссия. `pool.failback` — состояние 3c: `enabled`, `entry`, `entries`,
+  `on_backup`, `next_check_s`, `good_checks`, `interval_x`, `watchdog` (`enabled`, `mined_s`, `expected_shares`,
+  `strikes`).
+- `/gpus`: `index`, `bus`, имя, `state` (`mining`, `auto-uv`, `stopped`, `left_out`), хешрейт, W, MH/W, температура,
+  вентилятор, частоты, оффсеты, `set_by_ffgs`, `auto_uv`, `hw_errors`, `shares.found`, а также:
+  - `throttle` — причины троттлинга NVIDIA (`{"reasons":["power_cap","hw_thermal"],"hw":true}`, иначе `null`; причины
+    `idle`, `app_clocks`, `power_cap`, `hw_slowdown`, `sync_boost`, `sw_thermal`, `hw_thermal`, `hw_power_brake`,
+    `display_clock`; `hw` = HW slowdown / SW или HW thermal slowdown / power brake);
+  - `watchdog` (5g) — `{"on":true,"hangs":0,"slowdowns":0,"worker_restarts":0,"slow_under_hw_throttle":0,"held":false,
+    "baseline_ghs":5.3}` или `{"on":false}`;
+  - `auto_lock` (5e) — `null` без `--auto-lock`, иначе `swept`, `phase` (`sweeping` / `done` / `saved` / `fallback` /
+    `aborted` / `skipped`), `note`, `lock`, `choice`, `status` (`"auto-lock 1700, 2/7: measuring"` или `null`);
+  - `temp_limit` (5f) — `null` или `limit_c`, `stop_c`, `state` (`full` / `limited` / `stopped`), `work_pct`,
+    `clock_mhz`, `temp_c`, `throttled_s`, `stops`.
+- `/metrics`: формат Prometheus, список метрик — в английском разделе.
+
+Примеры: `curl -s http://127.0.0.1:4068/summary | jq '.hashrate, .shares'`; PowerShell:
+`Invoke-RestMethod http://127.0.0.1:4068/summary`. Prometheus с целями по имени (`targets: ["rig1:4068"]`): на rig1
+нужен `--api 0.0.0.0:4068 --api-hosts rig1` (или цели по IP-адресу — тогда `--api-hosts` не нужен).
+
+- **HiveOS:** `--api 4068` в *Extra config arguments*; `h-stats.sh` тогда берёт хешрейты, аптайм, шары и ватты из API
+  (адрес находит в логе; без ответа за 2 с или при статистике старше 60 с — читает лог, как раньше). На смешанном
+  NVIDIA + AMD риге `h-run.sh` даёт AMD-процессу `--api ПОРТ+1` (хост тот же), h-stats читает оба.
+- **Windows:** `set API=4068` в стартовых скриптах.
+
+### 3e. Автозапуск на Windows, уведомление о новой версии (новое в 0.5.4)
+**Автозапуск.** Двойной щелчок по **`install-autostart.bat`** в папке ffgs (после настройки `start.bat`); Windows один
+раз спросит права администратора. Создаётся задача Планировщика `ffgs`: запускает `start.bat` этой папки при **вашем**
+входе, через 30 с, в обычном окне майнера на вашем рабочем столе, с наивысшими правами (`LOCK_CCLOCK` / `COFFSET` /
+`AUTO_UV` / `AUTO_LOCK` без запроса UAC). Повторный запуск, пока задача идёт, игнорируется; запускается и от батареи и
+не останавливается при отключении кабеля; без ограничения времени (по умолчанию Планировщик снимает задачу через
+72 ч); обычный приоритет. Настройки в начале `install-autostart.bat`: `TASK` (имя задачи), `DELAY` (секунд после
+входа, 0 — сразу), `AC_ONLY=1` (ноутбуки: не запускать от батареи). После изменения или переноса папки — запустить ещё
+раз (задача ffgs заменится). **`remove-autostart.bat`** удаляет её (открытое окно майнера продолжает работать).
+
+Из консоли администратора: `ffgs --install-autostart [--task-name ИМЯ] [--autostart-delay С] [--autostart-bat ПУТЬ]
+[--autostart-ac-only] [--task-user ДОМЕН\ПОЛЬЗОВАТЕЛЬ] [--autostart-limited]`, `ffgs --remove-autostart [--task-name ИМЯ]`.
+`--autostart-bat` — по умолчанию `start.bat` рядом с `ffgs.exe`. `--task-user` — чей вход запускает задачу (по
+умолчанию тот, кто запустил ffgs; .bat передаёт пользователя, который его открыл). `--autostart-limited` — без
+администратора и без наивысших прав (тогда `start.bat` с настройками частот при `AUTO_ELEVATE=1` спрашивает права при
+каждом входе). Заменяется и удаляется только задача, созданная ffgs. Не кладите `start.bat` ещё и в «Автозагрузку» —
+будет два майнера. Linux: `--install-autostart` печатает подсказку; HiveOS запускает майнер сам; на обычном Linux —
+сервис systemd с `Restart=always`.
+
+**Настройки стартовых скриптов (0.5.4).** Кроме `AUTO_UV`: `AUTO_LOCK=1` (`--auto-lock`, 5e; считается настройкой
+частот для `AUTO_ELEVATE`), `TEMP_LIMIT=80` (`--temp-limit`, 5f; права администратора не нужны), `API=4068` (`--api`, 3d).
+
+**Уведомление о новой версии.** Во время майнинга, примерно через минуту после старта и затем примерно каждые 12 ч (со
+случайным разбросом), ffgs спрашивает у GitHub последний релиз `pepsykolya/FreeForGemSaseul` и, если он новее, пишет
+в лог жёлтым `ffgs 0.5.5 is available: <ссылка> (this is 0.5.4; ...)`. Один простой GET с `User-Agent: ffgs/<версия>`,
+никаких кошельков, воркеров и идентификаторов; ничего не скачивается и не ставится. В отдельном потоке: GitHub
+недоступен (или лимит 60 запросов в час на IP) — тишина, майнинг не затрагивается. Не делается в `--selftest`,
+`--bench`, `--oc-info`, `--pool-test`. `--no-update-check` — выключить; `ffgs --check-update` — проверить сейчас и выйти
+(код 0 — актуальна, 10 — есть новее, 1 — не удалось проверить).
+
 ### 4. HiveOS
 См. [HIVEOS.md](HIVEOS.md).
 
@@ -466,22 +1076,82 @@ needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the f
 - PoW — чистые вычисления без работы с памятью: **частоту памяти можно опустить** до минимума, это экономит ватты.
 - **Ядро по умолчанию** — максимум хешей на такт; лучше, когда карта упирается в лимит мощности или ядро зафиксировано высоко.
 - **`--eco`** — примерно на 12% меньше GH/s на такт, но ~17% меньше мощность; лучший H/W на андервольте.
-- RTX 3070: фиксация 1560 МГц → 4.78 GH/s при 108 Вт (по умолчанию) / 4.21 GH/s при 90 Вт (`--eco`).
+- **Замеры (0.5.3 / 0.5.4, ядро по умолчанию, пул Kavatar SL, nonce 40 hex).** GH/s — медиана 10-секундных строк
+  статуса после 60 с майнинга (≥ 4 мин на точку), Вт — мощность платы по NVML; оффсет auto-uv — то, что `--auto-uv`
+  нашёл на этой карте на этой фиксации (пол напряжения или край минус шаг). Рекомендуемое — **жирным**.
+
+  **RTX 3070** (HiveOS, драйвер 580.82.07; Rig01 8 карт, 2–4 карты на частоту, медиана; Rig02 4 карты на 1500 — те же
+  5,62 GH/s, 76 Вт на карту):
+
+  | Фиксация ядра | Память | Оффсет auto-uv | GH/s | Вт | MH/W | Вт при оффсете 0 | |
+  |---|---|---|---|---|---|---|---|
+  | 1200 | 810 | +240 … +255 | 4,51 | 65 | 69 | 71 | |
+  | 1300 | 810 | +240 … +255 | 4,90 | 73 | 67 | 84 | |
+  | 1400 | 810 | +255 … +330 | 5,29 | 75 | 70,5 | 88 | |
+  | **1500** | **810** | +330 … +435 | **5,62** | **76** | **73,9** | 98 | **лучший MH/W** |
+  | 1600 | 810 | +330 … +390 | 6,01 | 89 | 67,5 | 119 | |
+  | **1700** | **810** | +315 … +345 | **6,40** | **106** | **60,4** | 151 | **баланс** (лучший MH/W в пределах −10 % от макс. GH/s) |
+  | **1800** | **810** | +330 … +345 | **6,74** | **121** | **55,7** | 186 | **максимум хешрейта** |
+  | 1400 | сток | +300 | 5,29 | 104 | 50,9 | — | память 810 экономит 27 Вт |
+
+  `--lock-cclock 1500 --lock-mclock 810 --auto-uv` (лучший MH/W), `1700` (баланс), `1800` (максимум). Карты различаются
+  по ваттам до 25 % на одной частоте (1400: 67–79 Вт); хешрейт одинаковый (≈ 3,74 GH/s на 1000 МГц).
+
+  **RTX 3080 Ti** (Windows 10, драйвер 591.59, PL 350 Вт, одна карта; строки `auto-lock` — собственный 120-с замер ffgs):
+
+  | Фиксация ядра | Память | Оффсет | GH/s | Вт | MH/W | |
+  |---|---|---|---|---|---|---|
+  | 1200 | 810 | 0 | 7,73 | 137 | 56,5 | |
+  | 1400 | 810 | +120 (auto-uv, пол) | 9,07 | 160 | 56,9 | оффсет 0: 164 Вт |
+  | 1500 | 810 | 0 | 9,65 | 184 | 52,3 | |
+  | 1560 | 810 | +210 (auto-uv) | 10,03 | 177 | 56,6 | оффсет 0: 206 Вт |
+  | **1600** | **810** | +240 (auto-uv) | **10,32** | **180** | **57,4** | **лучший MH/W** |
+  | 1650 | 810 | 0 | 10,60 | 240 | 44,2 | |
+  | **1700** | **810** | +240 (auto-uv) | **10,98** | **212** | **51,9** | **баланс** (`--auto-lock` выбрал её же) |
+  | 1750 | 810 | 0 | 11,27 | 299 | 37,7 | |
+  | 1800 | 810 | +150 (auto-uv, край +180) | 11,49 | 268 | 42,9 | |
+  | **без фиксации** | **810** | 0 | **11,54** | **332** | **34,8** | **максимум хешрейта** (~1800 МГц) |
+  | 1400 | сток | 0 | 9,13 | 221 | 41,3 | память 810 экономит 57 Вт |
+  | без фиксации | сток | 0 | 11,13 | 349 | 31,9 | упирается в лимит мощности: медленнее, чем с памятью 810 |
+
+  `--lock-cclock 1600 --lock-mclock 810 --auto-uv` (лучший MH/W), `1700` (баланс), `--lock-mclock 810` без фиксации ядра
+  (максимум). До 1400 напряжение ядра уже на полу (auto-uv: +120, −4 Вт); андервольт окупается примерно с 1500.
+
+  **RTX 4070 Laptop** (Windows 11, от сети, без администратора — частотами не управлять): без лимита 4,80 GH/s, 63 Вт,
+  **77 MH/W** — драйвер сам держит 86–87 °C (свой термотроттлинг, ~1700 МГц). `--temp-limit` охлаждает ценой
+  хешрейта (5f): лимит 75 → 1,78 GH/s, 38 Вт, 47 MH/W; лимит 70 → 1,5 GH/s, 32 Вт, 46 MH/W; лимит 80 на этом ноутбуке
+  бесполезен (он и так на 86–87 °C, а пачки горячее). Замер до перенастройки регулятора в 0.5.4 (мягкий старт, стоп по
+  3 показаниям); перенастройка проверена на модели этого ноутбука, на самом ноутбуке — ещё нет.
+- **Частота памяти:** фиксируйте 810 (`--lock-mclock 810`; CMP 50HX: 5001, 5a). SL не нужна пропускная способность
+  памяти; стоковая частота памяти только добавляет ватты.
 
 ### 5a. Управление частотами GPU (новое в 0.4.0)
-ffgs умеет выставлять частоты карт, на которых майнит, так же, как FreeForGemPear:
+ffgs умеет выставлять частоты карт, на которых майнит:
 
 | Опция | Что делает |
 |---|---|
 | `--lock-cclock N` | фиксирует частоту ядра на N МГц (`nvidia-smi -lgc N,N`) |
-| `--lock-mclock N` | фиксирует частоту памяти на N МГц (`nvidia-smi -lmc N,N`); SL не нужна пропускная способность памяти — ставьте минимум (810 на RTX 30/40) |
+| `--lock-mclock N` | фиксирует частоту памяти на N МГц (`nvidia-smi -lmc N,N`); SL не нужна пропускная способность памяти — ставьте минимум (810 на RTX 30/40). Частота, которую карта не поддерживает, заменяется наименьшей поддерживаемой выше неё (0.5.3; у CMP 50HX нет 810: `memory clock 810 not supported, using 5001 (lowest supported)`) |
 | `--coffset N` / `--uv-offset N` | V/F-оффсет частоты ядра в МГц: при зафиксированной частоте положительный оффсет = та же частота при меньшем напряжении (андервольт) |
 | `--moffset N` | оффсет частоты памяти в МГц, может быть отрицательным (драйвер 555+) |
 | `--plimit W` | лимит мощности, Вт |
 
-- Одно значение — для всех карт майнинга; список через запятую — по значению на карту в порядке `--devices`. Пустое
-  значение, `-` или `0` — эту настройку на этой карте не трогать: `--devices 0,1,2 --lock-cclock 1400,,1560`. (Поэтому
-  оффсет ровно 0 через `0` не задать; без `--coffset` оффсет просто не трогается.)
+- Одно значение — для всех карт майнинга; список через запятую — по значению на карту в порядке `--devices` (без
+  `--devices` — все GPU в порядке nvidia-smi / HiveOS; при `--devices 2,0` первое значение — для GPU2). Пустое значение,
+  `-`, `0` или `x` (и `X`, `skip`) — эту настройку на этой карте не трогать: `--devices 0,1,2 --lock-cclock 1400,,1560`.
+- **Короткий список — последнее значение повторяется** на остальные карты (правило OC HiveOS, 0.5.4; в логе строка
+  `... 2 values for 3 GPUs: the last one (1500) also applies to the remaining 1 GPU (HiveOS rule)`). Значений больше,
+  чем карт, не число, вне диапазона — ошибка на старте (код 1, ничего не меняется). Списки — **без пробелов** (HiveOS и
+  стартовые скрипты делят аргументы по пробелам).
+- **`=0` ставит оффсет ровно 0** (только `--coffset`, `--moffset`; 0.5.4): `--coffset 325,=0`. Просто `0` по-прежнему
+  значит «не трогать» (в OC-профиле HiveOS `0` = «поставить 0»; здесь пишите `=0`). Без `--coffset` оффсет вообще не
+  трогается.
+- То же правило списков — у `--uv-min` / `--uv-max` / `--uv-step` (5c) и `--temp-limit` (5f).
+- **Строки на старте (0.5.4):** по строке на каждую карту с тем, что этот запуск на ней выставит (фиксации, оффсеты,
+  лимит мощности, диапазон auto-uv, а с `--auto-lock` — перебирается ли фиксация этой карты); пример — в английском
+  разделе.
+- **`--dry-run`** печатает эти строки и выходит, ничего не меняя (root не нужен; с `--devices` не нужна и GPU). На
+  самом риге показывает и замену частоты памяти по картам (`memory lock 810 MHz (not supported here: 5001)`).
 - Нужны права **root** (Linux) / **администратора** (Windows). Без них ffgs пишет одну строку (`needs root …` /
   `needs Administrator …`) и майнит на текущих частотах.
 - Применяется до стартового самотеста (ядро проверяется уже на новых частотах); каждое значение пишется в лог вместе с
@@ -495,40 +1165,260 @@ ffgs умеет выставлять частоты карт, на которы�
 - Трогаются только карты из `--devices`; сопоставление с NVML — по PCI bus id. NVML загружается при запуске
   (`libnvidia-ml.so.1` / `nvml.dll`); без неё ffgs всё равно майнит.
 - `--oc-info` показывает текущие частоты, оффсеты (с допустимым диапазоном) и лимиты мощности, ничего не меняя.
-- **Не совмещайте с другими средствами разгона на той же карте** (OC-профиль HiveOS, MSI Afterburner, `nvidia-smi` в
-  сервисе): при выходе ffgs сбрасывает свои фиксации, а с ними и фиксацию, которую до этого поставила другая программа.
+- **Настройки частот ffgs главнее других средств разгона (0.5.4).** Значение, которое ffgs ставит на карту
+  (`--lock-cclock`, `--lock-mclock`, `--coffset`, `--moffset`, `--plimit`, оффсет `--auto-uv`, фиксация `--auto-lock`),
+  ffgs держит, **даже если в OC-профиле HiveOS другие значения** (HiveOS применяет OC после перезагрузки или смены OC,
+  возможно уже после старта ffgs; MSI Afterburner / `nvidia-smi` — так же). Раз в 10 с, в своём такте строки состояния,
+  ffgs сравнивает частоты, оффсеты и лимит мощности, которые и так читает для этой строки, со своими; при расхождении
+  ставит свои снова (сначала фиксацию, потом оффсет; если частота или оффсет выше наших — работа этой карты на миг
+  встаёт). Одна оранжевая строка на событие, не чаще раза в 10 мин на карту, со счётчиком пропущенных:
+  `GPU0: core clock changed to 1680 MHz by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied
+  with the GPU paused`; в таблице частот — `re-applied Nx`. Проверка auto-uv или замер auto-lock, на время которых
+  пришлась такая смена, выбрасываются и повторяются. Сбой карты (Xid) в момент, когда другая программа меняет её
+  частоты (до 30 с после такого события на ней, до 15 с — на любой карте рига, или оффсет / частота при сбое не
+  ffgs-овские), андервольту не засчитывается: оранжевая строка `... crashed (Xid 43) while another tool changed its
+  clocks (HiveOS OC?): ... - not counted against the undervolt`, ffgs перезапускается как обычно. Если замечен только
+  чужой оффсет, ffgs сначала ставит заново и свою фиксацию (фиксация другой программы может уже стоять). Фиксацию прочитать нельзя, поэтому она видна по частоте: выше
+  нашей фиксации или заметно ниже при майнинге без причины по мощности / температуре и без снижения `--temp-limit`
+  (2 замера подряд). Карты и значения, которые ffgs не ставит (`x`, нет опции), остаются за HiveOS / другой программой.
+  Таблица и h-stats HiveOS показывают реальные частоты карты. Цена: единицы мкс на карту за такт (без отдельного
+  потока; с `--plimit` — одно чтение лимита мощности).
+- **При выходе** ffgs возвращает то, что застал при **своём** старте (оффсеты, лимит мощности), и снимает свои
+  фиксации. Если HiveOS применил OC после старта ffgs, это состояние до OC HiveOS, а не OC-профиль; HiveOS снова
+  применит OC при следующем запуске майнера.
 - Windows: переменные `LOCK_CCLOCK`, `LOCK_MCLOCK`, `COFFSET`, `MOFFSET`, `PLIMIT` в `start.bat` / `start-saseulmine.bat` /
-  `start-saseulpool.bat`.
+  `start-saseulpool.bat` (списки как выше, например `set COFFSET=325,x`; списки `--uv-*` — через `EXTRA`).
   Если задана хоть одна, скрипт просит Windows перезапустить его от администратора (`AUTO_ELEVATE=1` по умолчанию).
 
-**RTX 3070, замер (0.5.0):** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → **5,05 GH/s при 74 Вт (68 MH/W)** на пулах с 40 hex (Kavatar, saseulmine, соло), 4,65 GH/s на пулах с 16 hex;
-`--lock-cclock 1560` — ~5.1 GH/s при ~110 Вт. Подробнее — таблица в README.
+**Замеренные настройки по картам** (RTX 3070, RTX 3080 Ti, RTX 4070 Laptop) — таблицы в разделе 5 выше. RTX 3070:
+`--lock-cclock 1500 --lock-mclock 810 --auto-uv` — лучший MH/W.
 
-### 5c. Автоподбор андервольта `--auto-uv` (новое в 0.5.1)
-ffgs сам подбирает андервольт (тот же тюнер, что в FreeForGemPear): поднимает V/F-оффсет ядра каждой карты NVIDIA
-шагами по 15 МГц, проверяет каждый шаг и оставляет последний удачный минус один шаг запаса.
+### 5c. Автоподбор андервольта `--auto-uv` (новое в 0.5.1, по фиксации частоты с 0.5.3)
+ffgs сам подбирает андервольт: поднимает V/F-оффсет ядра каждой карты NVIDIA,
+проверяет каждый шаг и оставляет последний удачный оффсет минус один шаг 15 МГц запаса.
 
-    sudo ./ffgs --wallet <адрес>.<воркер> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+    sudo ./ffgs --wallet <адрес>.<воркер> --lock-cclock 1500 --lock-mclock 810 --auto-uv
 
-- **Нужна зафиксированная частота ядра** (`--lock-cclock` или фиксация в OC-профиле HiveOS): тогда больший оффсет =
-  та же частота при меньшем напряжении. Только NVIDIA, нужны права root / администратора.
-- **Первый запуск:** проверка-прогрев на стартовом оффсете (2 мин), затем по 30 с на шаг до `--uv-max`, затем
-  подтверждение 2 мин; все карты одновременно, майнинг начинается после (~10–15 мин). **Следующие запуски:**
-  сохранённый оффсет после проверки 20 с.
+- **Нужна зафиксированная частота ядра** (`--lock-cclock`, фиксация в OC-профиле HiveOS или `--auto-lock`, 5e): тогда
+  больший оффсет = та же частота при меньшем напряжении. Только NVIDIA, нужны права root / администратора.
+- **От крупного шага к мелкому (0.5.4):** оффсет поднимается шагами по **30 МГц** (`--uv-coarse`). Когда шаг падает,
+  тюнер возвращается к последнему хорошему оффсету и проверяет точку **+15 МГц** внутри этого интервала 30 МГц (один
+  лишний шаг), затем оставляет 15 МГц запаса. Результат — тот же край с точностью 15 МГц, что и у подъёма по 15,
+  примерно за половину шагов. (Сверху вниз — отклонено: первыми шли бы шаги, вероятнее всего роняющие карту.)
+- **Новая фиксация стартует от известного профиля (0.5.4):** если у карты есть проверенный профиль более высокой (или
+  той же) фиксации ядра с той же фиксацией памяти, старт = **оффсет этого профиля минус 30** вместо +120 (берётся
+  ближайшая такая фиксация; на более низкой частоте держатся более высокие оффсеты). Прогрев проверяет старт как всегда.
+  Не используется с `--uv-min`, после падения, когда не поднимает старт и когда тот профиль закончился на **полу
+  напряжения** или на своём старте (более низкая частота выходит на пол ещё раньше — перенос оффсета вниз только съел бы
+  запас; в логе `... ended on the voltage floor: not starting from it`).
+- **Подбор:** проверка-прогрев на стартовом оффсете (2 мин), затем ~30 с на шаг, затем подтверждение 2 мин: обычно
+  **~3,5–11,5 мин** (постоянная часть — прогрев + подтверждение — ~4,3 мин; вторая фиксация при известном профиле более
+  высокой — ~6,5 мин; в 0.5.3 — до ~16,5 мин). **Ждёт только подбираемая карта, остальные в это время майнят**, и
+  каждая карта начинает майнить сразу после своего подбора (0.5.3; раньше все карты ждали всех). В логе — прогресс (`step +340 (2/12): ok`), в строке
+  статистики — метка после хешрейта карты (`GPU1 0.000 [tuning +340, step 2/12]`), примерно раз в минуту — сводка
+  (`auto-uv: tuning 2 GPU(s) (GPU1, GPU3), ~6 min left`). Подбор заканчивается строкой `RESULT:`. Цвета (`--color`):
+  прогресс — голубой, пройденные проверки и результат — зелёный, шаги назад — жёлтый, сбои — красный.
+- **Порог напряжения:** если два шага подряд экономят слишком мало каждый (0,5 Вт на 15 МГц, т.е. < 1 Вт на шаг 30),
+  поиск останавливается ниже них, а не идёт до `--uv-max` (напряжение уже на минимуме, больший оффсет только съедает
+  запас; результат — хороший оффсет перед двумя плоскими шагами). Если поиск дошёл до `--uv-max` без
+  сбоя, лог сообщает об этом и о сэкономленной мощности.
+- **Стартовый оффсет, не прошедший проверку,** не остаётся: ffgs спускается шагами по 30 МГц до первого прошедшего и
+  майнит на нём (в том числе ниже вашего оффсета).
+- **Профили по фиксации частоты (0.5.3):** результат хранится по карте, модели, драйверу **и фиксации частоты ядра**
+  (`1400/mem810` = `--lock-cclock 1400 --lock-mclock 810`; без фиксации от ffgs профиль выбирает частота ядра под
+  нагрузкой майнинга, `~1410`). При смене фиксации и возврате каждый профиль используется снова. Профиль, проверенный
+  в пределах `--uv-reval-hours`, **применяется сразу** (карта майнит немедленно); более старый, от другой версии ffgs
+  или пониженный после сбоя — после проверки 20 с (ждёт только эта карта). Профиль без эталона этой версии ffgs (из 0.5.1 /
+  0.5.2, от другой версии ffgs, при других `--blocks` / `--threads`) сначала получает новый эталон — 60 с на своём нижнем
+  оффсете, затем проверку 20 с: ~85 с; тег статуса — `[reference +240]`, затем `[check +300]`, в логе это написано.
+  Результаты 0.5.1 / 0.5.2 становятся профилем той частоты, на которой подбирались, и используются для близкой фиксации
+  после проверки.
 - **Проверка** гоняет ядро майнинга на полной нагрузке в отдельном процессе на фиксированных тестовых заданиях: число
   кандидатов каждого запуска должно точно совпасть с эталоном (если карта хоть один хеш посчитала неверно, это видно за
   секунды), каждый сохранённый кандидат пересчитывается на CPU. Падение или зависание карты убивает только этот процесс.
-- **Во время майнинга:** аппаратная ошибка (bad candidate) — шаг назад на 15 МГц (сохраняется); каждые 6 ч
-  перепроверка 20 с (карта на это время встаёт). Если оффсет поменял кто-то другой (OC HiveOS), auto-uv карту отпускает.
-- Результаты — `ffgs-uv-results.txt` рядом с программой (HiveOS: `/hive-config/ffgs`, переживает обновления майнера), по
-  карте, модели и драйверу. Если ffgs упал на шаге (kill, Xid, питание), следующий запуск вернёт оффсет и будет
-  подбирать ниже этого шага. При выходе исходный оффсет возвращается, как с `--coffset`.
-- Опции: `--uv-min МГц` (начало поиска; по умолчанию текущий оффсет, иначе +120, RTX 40/50 — минимум +200),
-  `--uv-max МГц` (по умолчанию +495), `--uv-step МГц` (15), `--uv-reset` (забыть результаты и подобрать заново),
-  `--uv-reval-hours Ч` (6, 0 = никогда). Windows: `AUTO_UV=1` в батниках. `--coffset` вместе с `--auto-uv` — поиск
-  начинается с этого оффсета.
-- **RTX 3070, замер** (фиксация 1400/810, старт +250): шаги до +385 ok, +400 — сбой (недосчитан один кандидат) →
-  **+370**, 73 Вт вместо 76 Вт на +250; на Kavatar 5,04 GH/s, 69 MH/W, 0 реджектов.
+- **Во время майнинга:** аппаратная ошибка (bad candidate) — шаг назад на 15 МГц (сохраняется, при следующем запуске
+  проверяется); каждые 6 ч перепроверка 20 с (карта на это время встаёт). Если оффсет поменял кто-то другой (OC HiveOS), ffgs
+  ставит свой снова (5a; с 0.5.4, раньше auto-uv карту отпускал). Сбой GPU (Xid) — см. 5d.
+- Результаты — `ffgs-uv-results.txt` рядом с программой (HiveOS: `/hive-config/ffgs`, переживает обновления майнера).
+  Если ffgs упал на шаге (kill, Xid, питание), следующий запуск вернёт оффсет и будет подбирать ниже этого шага;
+  остановка ffgs (Ctrl-C, остановка майнера в HiveOS) во время проверки сбоем не считается. При выходе исходный оффсет
+  возвращается, как с `--coffset`.
+- Опции: `--uv-min МГц` (начало поиска; по умолчанию текущий оффсет, иначе +120, RTX 40/50 — минимум +200; или
+  подсказка от более высокой фиксации, см. выше), `--uv-max МГц` (по умолчанию +495), `--uv-step МГц` (15: **мелкий**
+  шаг — точность и запас результата, откат подтверждения и по аппаратным ошибкам; явный `--uv-step 15` ускорение
+  сохраняет), `--uv-coarse МГц` (новое в 0.5.4, шаг подъёма, по умолчанию 2 × `--uv-step`; `--uv-coarse 15` или любое
+  ≤ мелкого шага — подъём как в 0.5.3), `--uv-reset` (забыть профиль текущей фиксации и подобрать заново; профили других
+  фиксаций остаются), `--uv-reset-all` (забыть все профили **карт этого запуска**, всех фиксаций; с 0.5.4 строки других
+  карт в файле остаются — на смешанном риге или при двух процессах ffgs с общим `/hive-config/ffgs` чужие профили не
+  стираются), `--uv-reval-hours Ч` (6, 0 = никогда). Подбор, остановленный до результата, строки в файле не оставляет.
+  `--uv-min`, `--uv-max`, `--uv-step` принимают **списки по картам** (0.5.4, правило из 5a): `auto` — по умолчанию,
+  пусто / `-` / `x` — **на этой карте auto-uv нет** (`--uv-max 400,x`; в логе
+  `auto-uv: GPU1 left alone (empty / - / x in a --uv-* list)`).
+  Windows: `AUTO_UV=1` в батниках. `--coffset` вместе с `--auto-uv` — поиск начинается с этого оффсета.
+  `--uv-reset` / `--uv-reset-all` действуют один раз: собственный перезапуск после сбоя GPU (5d) их не повторяет.
+- Кроме подсказки от более высокой фиксации, старт по фиксации не выбирается: края у карт одного типа слишком разные
+  (RTX 3070 на 1700: +345 … +375). Старт — ваш текущий оффсет (например `--coffset 325`); если он не проходит, это стоит
+  нескольких проверок, а не подбора. Замеры по частотам — таблицы в разделе 5.
+
+### 5d. Сбои GPU (новое в 0.5.3)
+Сбой GPU (Xid 13 / 43 драйвера, "an illegal memory access") раньше завершал ffgs, и HiveOS перезапускал его в тот же
+сбой. Теперь:
+- сбойная карта определяется по событиям Xid драйвера и пишется в лог: `faults: GPU4 (bus 0000:04:00.0, RTX 3070)
+  FAILED: Xid 43 reported by the driver for this GPU`; она запоминается с оффсетом в `ffgs-gpu-faults.txt` (рядом с
+  программой; HiveOS: `/hive-config/ffgs`);
+- остальные карты продолжают майнить, если могут; если не осталось ни одного воркера (или карта зависла, 5g), ffgs
+  возвращает частоты и **перезапускает себя сам**, не больше 12 раз в час:
+  - Linux: тот же процесс и лог (exec); сверх лимита выходит, и HiveOS перезапускает его как раньше;
+  - Windows (0.5.4): ffgs выходит с кодом 2, и `start.bat` запускает его снова через 10 с (все карты снова майнят через
+    ~20 с). Времена перезапусков хранятся в `ffgs-restarts.txt` в папке состояния (рядом с `ffgs-uv-results.txt`);
+    старт в пределах 120 с после последнего считается этим перезапуском, поэтому лимит 12 в час соблюдается: сверх него
+    ffgs ждёт, пока самый старый перезапуск этого часа не устареет, и только тогда выходит. Позднейший запуск вручную
+    начинает счёт заново;
+  - `--uv-reset`, `--uv-reset-all` и `--auto-lock-reset` при таких перезапусках не повторяются;
+- **с `--auto-uv`:** карта, упавшая на своём андервольте, возвращается **на 30 МГц ниже** после проверки 20 с (без
+  подбора с нуля; профиль обновляется). Карта, падающая 2 запуска подряд на своём (сохранённом) оффсете, понижается на
+  60 МГц за каждые 2 сбоя до 0, затем исключается;
+- **без `--auto-uv`:** ffgs оффсеты не меняет; карта, упавшая 2 запуска подряд, **исключается из майнинга на час**
+  (`... is LEFT OUT of mining ...`), остальные майнят; если исключены все карты, ffgs ждёт, а не выходит (нет цикла
+  перезапусков);
+- **GPU, который не открывается (0.5.4)** — `CUDA-capable device(s) is/are busy or unavailable`, часто с Xid 38 на каждой
+  попытке, например после сбоя предыдущего майнера при его остановке, — это **не** сбой андервольта или оффсета: ничего
+  не записывается, оффсет и профиль auto-uv остаются. ffgs пишет об этом один раз (`GPU1 ... cannot be opened (...):
+  likely needs a GPU reset or a reboot; left out, the other GPUs mine ...`), показывает `[unavailable]` в строке статуса
+  (API: `"state":"unavailable"`) и пробует снова через 1, 5 и 15 мин, дальше каждые 15 мин; как только карта открылась —
+  она майнит. Подбор или проверка этой карты ждёт так же и продолжается на том же оффсете. Обычно помогает только
+  перезагрузка.
+- 30 мин майнинга без сбоя обнуляют счётчик. Удаление `ffgs-gpu-faults.txt` забывает всё сразу.
+
+### 5e. Автовыбор фиксации частоты ядра `--auto-lock` (новое в 0.5.4)
+ffgs сам выбирает фиксацию частоты ядра каждой NVIDIA-карты: майнит на нескольких частотах, каждую — со своим
+андервольтом (auto-uv, 5c), меряет хешрейт и мощность и оставляет самую экономичную частоту, теряющую не более 10 %
+от максимального хешрейта.
+
+    sudo ./ffgs --wallet <адрес>.<воркер> --lock-mclock 810 --auto-lock
+
+- **Только NVIDIA, root / администратор.** `--auto-lock` включает `--auto-uv`. `--lock-mclock`, `--moffset`, `--plimit`
+  работают как раньше (фиксация памяти входит в ключ сохранения: другая — новый перебор).
+- **`--lock-cclock` вместе с `--auto-lock`:** карта со своим значением `--lock-cclock` (одно значение — все карты; список
+  по картам — эти карты) сохраняет эту фиксацию и **не перебирается**; остальные перебираются. `--lock-cclock 1400,x
+  --auto-lock` перебирает только GPU1. Если значение есть у всех карт, перебирать нечего (предупреждение; auto-uv
+  подбирает каждую на её фиксации). Карта с `x` в списке `--uv-*` (без auto-uv) тоже не перебирается. Стартовые строки по
+  картам (5a) показывают это в колонке `auto-lock` (`sweeps the core lock`, `off (own --lock-cclock)`, `off (no auto-uv)`).
+- **Какие частоты:** по умолчанию 1800, 1700 … 1200 МГц, не выше максимальной частоты карты (карта, не достающая
+  1600, получает 5 частот ниже своего максимума). `--auto-lock-range 1200-1700:100` (от-до[:шаг], шаг по умолчанию 100)
+  или список `--auto-lock-range 1300,1450,1600`.
+- **Перебор, сверху вниз, по каждой карте:** ставится частота → auto-uv сразу применяет сохранённый профиль этой
+  частоты или проверяет / подбирает его (новая частота стартует от профиля более высокой минус 30, 5c: **~5–12 мин**;
+  **ждёт только эта карта**) → карта **майнит**: 45 с на установление, затем 120 с замера (GH/s по собственному счётчику
+  хешей карты, средние ватты NVML, медиана частоты ядра). **Шары, найденные во время замера, уходят в пул как обычно.**
+  Остальные карты майнят всё время; все карты перебираются параллельно.
+- **Ранний останов:** как только частота ниже максимума больше допустимой потери, ниже не меряется.
+- **Выбор:** `--auto-lock-goal eff` (по умолчанию) — лучший MH/W среди частот в пределах `--auto-lock-max-loss` % (10,
+  0..90) от максимального GH/s; `--auto-lock-goal speed` — максимальный GH/s.
+- **Не в зачёт:** частота не удержалась (медиана ниже фиксации больше чем на max(45 МГц, 3 %): лимит мощности /
+  температуры) → `not valid`; аппаратные ошибки во время замера → `not valid` (и auto-uv откатывает профиль на шаг);
+  майнинг рвался (нет задания, пул офлайн) → до 3 повторов, затем `not valid`. Частоту отверг драйвер, auto-uv не
+  нашёл рабочего оффсета, сбой GPU (Xid) на ней → `FAILED`, дальше частота ниже. Если ffgs умер во время частоты
+  (Xid, зависание, питание), следующий старт помечает её `crashed` и больше не пробует (до `--auto-lock-reset`).
+- **Нет управления фиксацией** (часть ноутбуков, старые карты): строка `... not supported on this GPU: fallback to
+  auto-uv at the current clocks`, карта майнит как с одним `--auto-uv`. Ни одной годной частоты — возврат к частотам
+  драйвера по умолчанию.
+- **Итог** — таблица в логе (частота, оффсет, GH/s, Вт, MH/W, ★ у выбранной; пример — в английском разделе), строка
+  `mining at lock 1700 ★`. Во время перебора в строке статуса после хешрейта карты — метка
+  `[auto-lock 1700, 2/7: measuring]`.
+- **Сохраняется** по карте, модели, драйверу и фиксации памяти в `ffgs-autolock.txt` рядом с `ffgs-uv-results.txt`
+  (HiveOS: `/hive-config/ffgs`). **Следующий старт сразу ставит сохранённую частоту** (с её профилем auto-uv). Смена
+  `--auto-lock-goal` / `--auto-lock-max-loss` — перевыбор из сохранённых точек без замеров; более широкий диапазон или
+  большая потеря — меряются только недостающие частоты. `--auto-lock-reset` забывает точки и перебирает заново (профили
+  auto-uv остаются; `--uv-reset` вдобавок переподберёт каждую частоту). Новый драйвер = новый перебор. Собственный
+  перезапуск (5d) `--auto-lock-reset` не повторяет.
+- **Время:** первый перебор карты — на каждую частоту подбор auto-uv новой частоты (карта на паузе) плюс ~3 мин замера
+  в майнинге; с ранним остановом обычно 3–5 частот на карту, параллельно по всем картам. Последующие старты — ничего.
+- **С `--temp-limit`** (5f) фиксацию, которой владеет auto-lock, он никогда не снижает (только паузы / стоп). Сторож
+  зависания (5g) на время смены частоты придерживается и на новой частоте начинает новую базу.
+- **HiveOS:** `--auto-lock` (и, например, `--lock-mclock 810`) — в *Extra config arguments*; **фиксацию ядра в
+  OC-профиле HiveOS оставьте пустой** (ffgs ставит фиксацию и сбрасывает её на выходе). **Windows:** `set AUTO_LOCK=1` в
+  стартовом скрипте (считается настройкой частот для `AUTO_ELEVATE`).
+
+### 5f. Защита по температуре `--temp-limit` (новое в 0.5.4; в первую очередь для ноутбуков)
+**Предназначено в первую очередь для ноутбуков и мобильных GPU.** У ноутбука охлаждение общее с CPU, а вентиляторами не
+управлять, поэтому при долгом майнинге GPU сидит на собственном пороге троттлинга (~87 °C). `--temp-limit` держит его
+холоднее, давая меньше работы. Десктопные риги обычно держат температуру вентиляторами (HiveOS autofan), им это не нужно.
+
+| Опция | Смысл | По умолчанию |
+|---|---|---|
+| `--temp-limit C[,C…]` | держать GPU не выше C (40..100); одно значение или список по картам (5a), `0` / пусто — выключено для этой карты | выкл |
+| `--temp-stop C2[,…]` | жёсткий стоп: при C2 (3 замера подряд) GPU не майнит, пока не остынет на 6 °C ниже лимита | min(C+10, 90), не меньше C+3 |
+| `--temp-mem C[,…]` | лимит памяти (junction), если драйвер его даёт (стоп = он + 10) | C+15 |
+| `--temp-hotspot C[,…]` | лимит hotspot (AMD «junction»), если есть (стоп = он + 10) | C+15 |
+| `--temp-no-clocks` | никогда не снижать фиксацию ядра, только паузы | — |
+
+Пример (ноутбук, Windows, без администратора): `ffgs.exe --wallet ... --temp-limit 80` или `set TEMP_LIMIT=80` в
+стартовом скрипте.
+
+- **Мягкий старт:** майнинг начинается с доли работы 30 % и плавно разгоняется (строки в логе нет, если GPU не дошёл до
+  лимита; холодная карта выходит на полную скорость за ~15–30 с). Датчик ядра ноутбука реагирует на мощность примерно за
+  секунду: старт сразу со 100 % давал выброс на 15–25 °C выше лимита.
+- С **C-3** (по сглаженному замеру) GPU в режиме лимита; регулятор задаёт *долю работы* (10–100 %), чтобы температура
+  держалась в **C-2 .. C-1**. Он смотрит на замер, сглаженный за несколько секунд, и меняет долю работы медленно (не
+  больше +5 % / −20 % в секунду), поэтому быстрый датчик ноутбука его не раскачивает. Доля работы — это паузы между
+  запусками: права админа не нужны, работает на ноутбуках без управления частотами и на AMD.
+- Если ffgs сам зафиксировал частоту ядра (`--lock-cclock`, root / администратор, NVIDIA) и на этой карте нет оффсета
+  ffgs или auto-uv, **сначала снижается эта фиксация** (шаг 15 МГц, до 60 % фиксации / не ниже 800 МГц), паузы — только
+  ниже (ниже частота — ниже напряжение, энергия на хеш меньше, чем при простое). С `--auto-uv` / `--coffset` фиксация не
+  снижается (оффсет найден именно на ней), с `--auto-lock` (5e) — тоже.
+- **Полная скорость** (одна строка в логе) после 30 с на полной скорости при температуре не выше **C-5**. **Жёсткий
+  стоп:** любой датчик на своей температуре стопа 3 замера подряд (или сразу, если на 5 °C выше) → запусков нет, пока
+  все датчики не станут на 6 °C ниже своих лимитов (или на 3 °C ниже, если стоп длится уже 60 с: тёплый ноутбук может
+  простаивать около C-6), затем майнинг с 30 % и плавный разгон. Односекундный пик стопа не вызывает.
+- **Чего это стоит — честно.** Без прав администратора остаются только паузы, а в своих запусках GPU работает на полном
+  бусте (термотроттлинг драйвера в паузах отпускает). Поэтому лимит снижает температуру и шум ценой хешрейта **и**
+  эффективности. Замер на RTX 4070 Laptop (Windows, от сети, без админа): без лимита 4,80 GH/s, 63 Вт, **77 MH/W** —
+  драйвер сам держит 86–87 °C; `--temp-limit 75` / `70` — 1,5–1,8 GH/s, 32–38 Вт, **~47 MH/W** (замер до перенастройки
+  регулятора в 0.5.4, описанной здесь; перенастройка проверена на модели этого ноутбука). Это способ держать
+  ноутбук холоднее и тише, а не намайнить больше на ватт. С правами администратора / root и `--lock-cclock` ffgs сначала
+  снижает фиксацию частоты (следующий пункт) — с ней эффективность заметно лучше, чем с паузами.
+- **Лог:** строка только на смену состояния. В строке статуса `GPU0 3.100 [temp-limit 72%]`, `[temp-limit 1290 MHz]` /
+  `[temp-limit 840 MHz 60%]` или `[temp-stop 91 C]`; в минутной таблице `temp-limit 80 C: 72% now, throttled 12m 30s,
+  1 stop(s)`. HiveOS `h-stats.sh` эти метки пропускает. Показывается и отдаётся реальный хешрейт; пока GPU не майнит
+  (temp-stop, пул офлайн), в строке 0 и 0.0 MH/W (в таблице `-`).
+- **Тестовый хук** `FFGS_TEST_TEMP` (только для разработки) подменяет *замер* температуры: настоящий GPU при этом ничем
+  не защищён (греется как без лимита). Только короткие прогоны на холодной карте.
+- **Датчики:** NVIDIA (NVML, без root) — ядро; память — где карта её отдаёт (HBM; GeForce обычно нет); hotspot в NVML
+  нет. AMD Linux (amdgpu hwmon) — edge, junction (hotspot), mem. AMD Windows — в этой версии датчиков нет (`--temp-limit`
+  там выключен, пишется в лог). Учитывается самый горячий датчик относительно своего лимита; карта без датчика не
+  ограничивается (лог при старте).
+- **С auto-uv:** проверка начинается, только когда карта на паузе остыла до C-10; проверка, дошедшая до `--temp-stop`,
+  повторяется после остывания; шаг подбора, который всё время слишком горячий, завершает поиск на последнем хорошем (не
+  считается краем). Сторож зависания (5g) никогда не оценивает карту, которую `--temp-limit` притормаживает или
+  остановил. `--bench` и `--selftest` `--temp-limit` не учитывают.
+
+### 5g. Сторож зависания GPU (новое в 0.5.4)
+5d реагирует, когда воркер **останавливается** с ошибкой CUDA и драйвер сообщает Xid. Но карта может сломаться тихо:
+запуск ядра не возвращается (**зависание**: ни ошибки, ни Xid) или карта работает в разы медленнее (**просадка**).
+
+- **Зависание** — у майнящего воркера нет прогресса `--watchdog-hang` с (по умолчанию 60; 180, пока воркер открывает
+  GPU). Карта останавливается как сбой без Xid (запись в `ffgs-gpu-faults.txt` с её оффсетом, как в 5d), и ffgs
+  **перезапускает себя**, даже если другие карты майнят (5d: Linux — exec, Windows — выход 2 + `start.bat`; не больше 12
+  в час). Следующий старт действует по записи, как при Xid (с `--auto-uv` на 30 МГц ниже; без него карта, зависшая 2
+  старта подряд, исключается на час). Сверх лимита 12 в час остальные карты майнят, а зависшая ждёт следующего старта.
+  AMD: ffgs выходит (2), перезапускает стартовый скрипт / HiveOS.
+- **Просадка** — хешрейт карты за 10 с держится ниже `--watchdog-drop` % (30) её **собственной** базы
+  `--watchdog-minutes` (3) минут. База = медиана последних 60 нормальных 10-с замеров (10 мин), оценка — после 5 мин
+  замеров; низкие замеры в базу не попадают. Действие: на тюненом оффсете auto-uv оффсет сразу −30 МГц (перепроверка в
+  течение минуты); воркер этой карты останавливается, CUDA-контекст сбрасывается (AMD — OpenCL-контекст создаётся
+  заново), стартует новый воркер; остальные карты майнят. 3-я просадка карты за час, воркер, не остановившийся за 30 с,
+  или карта, которую не удалось открыть снова, — как зависание.
+- **Не оценивается** (и 30 с после; 60 с после старта воркера): воркер простаивает (проверка / подбор auto-uv, нет
+  задания, пул офлайн), минута комиссии / реферала, перезапуск воркера; пока auto-uv меняет оффсет или auto-lock меняет
+  фиксацию (смена фиксации начинает новую базу); карта, которую `--temp-limit` притормаживает или остановил. Просадка,
+  пока NVML сообщает аппаратный / драйверный троттлинг (HW slowdown, thermal, power brake), **только пишется в лог** (раз
+  в 10 мин): перезапуск не поможет. Просадка больше половины карт сразу (минимум 2) — это риг (CPU, питание, хост):
+  пишется раз в 10 мин, ничего не перезапускается.
+- Опции: `--watchdog-hang С` (≥ 10), `--watchdog-drop ПРОЦ` (1..95), `--watchdog-minutes М` (≥ 0,5), `--no-watchdog`.
+- Строки лога начинаются с `watchdog:` (`HANG`, `SLOW` красным, с частотами, ваттами и температурой в этот момент). В
+  строке статуса после хешрейта карты — ` [wd 1h 2s]`, если сторож действовал на неё в этом запуске (h — зависания, s —
+  просадки); h-stats HiveOS не затронут. Счётчики — в поле `watchdog` API (3d).
 
 ### 5b. Видеокарты AMD (новое в 0.4.0)
 Тот же `ffgs` / `ffgs.exe` майнит и на AMD Radeon через OpenCL (оптимизировано под RDNA2):
@@ -735,7 +1625,16 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 | `--coffset MHz[,MHz…]`（别名 `--uv-offset`） | 核心频率 V/F 偏移 = 锁定频率下的降压 |
 | `--moffset MHz[,MHz…]` | 显存频率偏移，可为负（驱动 555+） |
 | `--plimit W[,W…]` | 功耗上限 |
+| `--dry-run` | 打印各参数在每张 GPU 上的设置后退出，不做任何修改（见 5a，0.5.4 新增） |
 | `--oc-info` | 显示所选 GPU 的频率、偏移和功耗上限后退出（无需 root） |
+| `--auto-uv`、`--uv-min/--uv-max/--uv-step MHz[,…]`、`--uv-coarse MHz`、`--uv-reset`、`--uv-reset-all`、`--uv-reval-hours H` | 自动降压，见 5c |
+| `--auto-lock`、`--auto-lock-range`、`--auto-lock-max-loss PCT`、`--auto-lock-goal eff\|speed`、`--auto-lock-reset` | 每张卡自动选择核心锁频，见 5e（0.5.4 新增） |
+| `--temp-limit C[,C…]`、`--temp-stop`、`--temp-mem`、`--temp-hotspot`、`--temp-no-clocks` | 温度保护，主要用于笔记本，见 5f（0.5.4 新增） |
+| `--watchdog-hang S`、`--watchdog-drop PCT`、`--watchdog-minutes M`、`--no-watchdog` | GPU 卡死看门狗，见 5g（0.5.4 新增） |
+| `--failback-minutes N`、`--noshare-minutes M`、`--reject-minutes K` | 矿池健康：回到主矿池、无接受份额看门狗，见 3c（0.5.4 新增） |
+| `--api [主机:]端口`、`--api-hosts 名称[,…]` | 本地只读 HTTP/JSON API，见 3d（0.5.4 新增） |
+| `--install-autostart`（`--task-name`、`--autostart-delay`、`--autostart-bat`、`--autostart-ac-only`、`--task-user`、`--autostart-limited`）、`--remove-autostart` | Windows：登录时自动运行 `start.bat`，见 3e（0.5.4 新增） |
+| `--no-update-check`、`--check-update` | 关闭新版本提示 / 检查一次后退出，见 3e（0.5.4 新增） |
 | `--log 文件` | 同时把日志追加写入文件（纯文本，除非 `--color always`；Windows 启动脚本写入 `logs\ffgs.log`） |
 | `--color auto\|always\|never` | 控制台颜色，见第 3a 节（默认 `auto`） |
 | `--no-color` | 等同 `--color never` |
@@ -758,7 +1657,8 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 | GPU 温度（表格） | 低于 70 °C 绿色，70–79 °C 黄色，80 °C 起红色 |
 | 合计：`rig` 行、表格标题 | 粗体 |
 | 过期 / 丢弃 / low-diff 份额、等待任务、切换服务器、矿池统计未更新 | 黄色 |
-| 被拒绝的份额、错误、硬件错误、断线、`OFFLINE` / `pool offline` | 红色 |
+| auto-uv / auto-lock 的预期结果（0.5.4）：调优步骤或快速校验失败（`step +360 (3/7): FAILED (...)`）、`edge found`、`tuning again`、调优失败的锁频；被其他工具修改后重新设置的频率（`... by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied`，见 5a） | 橙色（256 色 208；Linux 文本控制台及不支持 256 色的终端为黄色） |
+| 需要注意的问题：被拒绝的份额、错误、硬件错误、断线、`OFFLINE` / `pool offline`、挖矿时崩溃 / 被排除 / 无法打开的显卡、auto-uv 最终 `RESULT: FAILED` | 红色 |
 | 新区块高度、份额难度 / 除数变化 | 青色 |
 | 开发者费用时段（其份额行与状态行） | 暗色 |
 | 时间戳、表格列名 | 灰色 |
@@ -787,6 +1687,65 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 - 控制台的 `pool` 行显示矿池对您钱包的统计：10 分钟算力、余额、已支付、未成熟区块。
 - 开发者费用的那一分钟在同一矿池为 ffgs 开发者钱包挖矿（不连接其他矿池）。
 
+### 3c. 矿池健康：回到主矿池、无接受份额看门狗（0.5.4 新增）
+`--pool` 填写同一协议的多个地址即为备用列表，**第一个为主矿池**（例如 `--pool sl.kasplay.online:3333,nl.rabbitminer.cc:1931`）。
+- **回到主矿池**：在备用矿池上挖矿时，每 `--failback-minutes`（默认 10）分钟用*单独的连接*检查主矿池（不影响挖矿、
+  不提交份额）：rabbitminer 连接+登录（同一 wallet.worker）+一次 `getjob`；saseulmine 一次签名的 `GET /mine`；saseulpool
+  连接+订阅+25 秒内收到一个区块模板（集群中学到的服务器算作同一矿池）。连续 **2 次**检查成功（第二次在 60 秒后）后切回：
+  先把正在计算和已找到的份额发往备用矿池，再连接主矿池，GPU 约停 1–2 秒。`--failback-minutes 0` = 关闭。
+- **无接受份额看门狗**：已连接并在计算，但 max(`--noshare-minutes`（15），10 × 预期份额间隔）分钟内无接受份额，
+  或 `--reject-minutes`（5）分钟内全部被拒（至少 5 个），或 5 分钟无可用任务 → 先重连同一矿池，再次发生则切换到列表中的
+  下一个矿池（最后一个之后回到第一个）。`0` = 关闭该项。
+- 不触发的情况：GPU 未为你的矿池计算（auto-uv 调优/校验、无任务、断线、切换中）、开发者费用/推荐分钟及其后 10 秒、
+  单人/自建节点模式（不含 Kavatar / rabbitminer.cc 的 `主机:端口` 列表）；GPU 根本没找到份额时只警告（GPU 问题，不是矿池问题）。
+  被看门狗离开的主矿池检查间隔逐次加倍（最多 ×16），在其上稳定 2 小时后恢复。saseulpool 上“接受” = 已送达（见 6b）。
+- 同一矿池列表上的开发者费用/推荐会话跟随用户会话切换（每分钟最多一次，不在其自身的那一分钟内）；费用分钟本身不变。
+  拒绝登录的 rabbitminer 矿池会使下一次尝试从下一个地址开始；在备用矿池上时，60 秒表格标题显示 `…, backup pool 2 of 2`。
+
+### 3d. 本地 API `--api`（0.5.4 新增）
+只读的 HTTP/JSON API，供您自己监控使用：
+
+    ffgs --wallet 地址 ... --api 4068               # http://127.0.0.1:4068（仅本机）
+    ffgs --wallet 地址 ... --api 0.0.0.0:4068       # 所有网卡：局域网内其他机器可读取
+    ffgs --wallet 地址 ... --api [::1]:4068         # IPv6
+
+- 默认只监听 `127.0.0.1`。其他地址必须显式写出；非回环地址会在日志中给出黄色警告（能访问该地址的人都能读取矿机统计，请用防火墙限制）。
+  日志：`API: listening on http://127.0.0.1:4068 (read-only: /summary, /gpus, /metrics)`。`--api` 参数错误：立即退出（代码 1）；
+  端口被占用不会停止挖矿（`mining without the API`）。
+- **安全：** 只接受 `GET` 和 `HEAD`（其他返回 `405`），没有写入或控制接口，无认证；回复中绝不包含矿池密码、saseulmine 客户端密钥、
+  solo 代理令牌；单个小线程（最多 16 个连接、请求头 4 KiB、每连接 5 秒）只读取每 10 秒刷新的统计副本，不接触 GPU、NVML 或矿池；不发送 CORS 头。
+- **Host 头白名单**（防 DNS rebinding）：允许 `localhost`、`127.0.0.1`、`[::1]`、绑定地址、绑定 `0.0.0.0` / `[::]` 时的任意 IP，
+  以及 **`--api-hosts 名称[,名称…]`** 给出的名称；其他 Host 返回 `403`；没有 Host 头的请求照常响应。
+
+| 路径 | 格式 | 内容 |
+|---|---|---|
+| `GET /`、`GET /summary` | JSON | 矿机概要：版本、运行时间、矿池（协议、当前地址、`index` = 当前备用列表序号、连接状态、`failback`）、钱包/矿工、算力、份额、功耗与 MH/W、抽水状态 |
+| `GET /gpus` | JSON | 每张显卡：序号、总线、名称、状态、算力、功耗、温度、风扇、频率、偏移、`auto_uv`、`throttle`、`watchdog`、`auto_lock`、`temp_limit`、份额 |
+| `GET /metrics` | Prometheus 文本 | 矿机与每张显卡的指标（算力单位 H/s） |
+
+字段名与格式见英文部分；未知值为 `null`；每 10 秒刷新（`updated_s_ago` 为数据年龄）。`throttle`：NVIDIA 降频原因
+（`{"reasons":[...],"hw":bool}`，其他为 `null`）；`watchdog`：看门狗计数（5g）；`auto_lock`：未用 `--auto-lock` 时为 `null`（5e）；
+`temp_limit`：温度限制状态（5f）；`pool.failback`：3c 的状态。Prometheus 按主机名抓取（`targets: ["rig1:4068"]`）时，
+rig1 需要 `--api 0.0.0.0:4068 --api-hosts rig1`（或改用 IP 目标）。
+- HiveOS：在 Extra config arguments 中加入 `--api 4068`，`h-stats.sh` 从 API 读取算力、运行时间、份额与功耗（API 无响应或数据过旧时
+  照旧解析日志）。NVIDIA + AMD 混合矿机上，`h-run.sh` 给 AMD 进程 `--api 端口+1`（主机不变），h-stats 读取两者。
+- Windows：启动脚本中 `set API=4068`。
+
+### 3e. Windows 开机自启、新版本提示（0.5.4 新增）
+- **开机自启：** 配置好 `start.bat` 后，双击 **`install-autostart.bat`**（Windows 会请求一次管理员权限）。它创建任务计划
+  任务 `ffgs`：在**您**登录后 30 秒运行本文件夹的 `start.bat`，窗口显示在您的桌面，以最高权限运行（`LOCK_CCLOCK` / `COFFSET` /
+  `AUTO_UV` / `AUTO_LOCK` 无需 UAC 确认），使用电池时也会启动且拔掉电源不停止，无运行时间限制，普通优先级。
+  `install-autostart.bat` 开头可设置 `TASK`、`DELAY`、`AC_ONLY=1`（笔记本：使用电池时不启动）。**`remove-autostart.bat`** 删除该任务。
+  命令行（管理员）：`ffgs --install-autostart [--task-name 名称] [--autostart-delay 秒] [--autostart-bat 路径] [--autostart-ac-only]
+  [--task-user 域\用户] [--autostart-limited]`、`ffgs --remove-autostart [--task-name 名称]`。只会替换或删除由 ffgs 创建的任务。
+  不要同时把 `start.bat` 放进“启动”文件夹（会启动两个矿工）。Linux：HiveOS 自行启动矿工；普通 Linux 使用 systemd 服务（`Restart=always`）。
+- **启动脚本新设置（0.5.4）：** 除 `AUTO_UV` 外，`AUTO_LOCK=1`（`--auto-lock`，5e；对 `AUTO_ELEVATE` 算作频率设置）、
+  `TEMP_LIMIT=80`（`--temp-limit`，5f；无需管理员）、`API=4068`（`--api`，3d）。
+- **新版本提示：** 挖矿时，启动约 1 分钟后及之后约每 12 小时（随机分散），ffgs 向 GitHub 查询 `pepsykolya/FreeForGemSaseul`
+  的最新发布版本，如有更新则在日志中黄色提示 `ffgs X.Y.Z is available: <链接>`。仅发送一个普通 GET 请求（`User-Agent: ffgs/<版本>`），
+  不发送钱包或任何标识，不会自动下载或安装；无网络时不影响挖矿。`--no-update-check` 关闭；`ffgs --check-update` 立即检查一次后退出
+  （退出码 0 = 已是最新，10 = 有新版本，1 = 检查失败）。
+
 ### 4. HiveOS
 见 [HIVEOS.md](HIVEOS.md)。
 
@@ -794,21 +1753,71 @@ SASEUL 地址为 44 个十六进制字符（`5a00b883bd62…94ea`）。可使用
 - 该 PoW 只做计算、不访问显存：**显存频率可以降到最低**以节省功耗。
 - **默认内核**：每个时钟周期算力最高，适合功耗墙受限或核心频率锁定较高的情况。
 - **`--eco`**：每时钟算力约低 12%，功耗约低 17%，降压显卡上能效最佳。
-- RTX 3070 参考：锁定 1560 MHz → 4.78 GH/s / 108 W（默认），4.21 GH/s / 90 W（`--eco`）。
+- **实测（0.5.3 / 0.5.4，默认内核，Kavatar SL 矿池，40 位十六进制 nonce）。** GH/s = 挖矿 60 秒后 10 秒状态行的中位数（每点 ≥ 4 分钟），
+  W = NVML 板卡功耗；auto-uv 偏移 = `--auto-uv` 在该卡、该锁频下找到的值（电压下限或边界减一步）。**粗体**为推荐设置。
+
+  **RTX 3070**（HiveOS，驱动 580.82.07；Rig01 8 张卡，每个锁频 2–4 张，取中位数；Rig02 4 张卡在 1500：同样每卡 5.62 GH/s、76 W）：
+
+  | 核心锁频 | 显存 | auto-uv 偏移 | GH/s | W | MH/W | 偏移 0 时 W | |
+  |---|---|---|---|---|---|---|---|
+  | 1200 | 810 | +240 … +255 | 4.51 | 65 | 69 | 71 | |
+  | 1300 | 810 | +240 … +255 | 4.90 | 73 | 67 | 84 | |
+  | 1400 | 810 | +255 … +330 | 5.29 | 75 | 70.5 | 88 | |
+  | **1500** | **810** | +330 … +435 | **5.62** | **76** | **73.9** | 98 | **能效最佳** |
+  | 1600 | 810 | +330 … +390 | 6.01 | 89 | 67.5 | 119 | |
+  | **1700** | **810** | +315 … +345 | **6.40** | **106** | **60.4** | 151 | **平衡**（最高 GH/s 的 −10 % 以内能效最佳） |
+  | **1800** | **810** | +330 … +345 | **6.74** | **121** | **55.7** | 186 | **最高算力** |
+  | 1400 | 默认 | +300 | 5.29 | 104 | 50.9 | — | 显存 810 省 27 W |
+
+  `--lock-cclock 1500 --lock-mclock 810 --auto-uv`（能效最佳），`1700`（平衡），`1800`（最高）。同一锁频下各卡功耗差异可达 25 %
+  （1400：67–79 W）；算力相同（约每 1000 MHz 3.74 GH/s）。
+
+  **RTX 3080 Ti**（Windows 10，驱动 591.59，功耗墙 350 W，一张卡；`auto-lock` 行为 ffgs 自己的 120 秒测量）：
+
+  | 核心锁频 | 显存 | 偏移 | GH/s | W | MH/W | |
+  |---|---|---|---|---|---|---|
+  | 1200 | 810 | 0 | 7.73 | 137 | 56.5 | |
+  | 1400 | 810 | +120（auto-uv，下限） | 9.07 | 160 | 56.9 | 偏移 0：164 W |
+  | 1500 | 810 | 0 | 9.65 | 184 | 52.3 | |
+  | 1560 | 810 | +210（auto-uv） | 10.03 | 177 | 56.6 | 偏移 0：206 W |
+  | **1600** | **810** | +240（auto-uv） | **10.32** | **180** | **57.4** | **能效最佳** |
+  | 1650 | 810 | 0 | 10.60 | 240 | 44.2 | |
+  | **1700** | **810** | +240（auto-uv） | **10.98** | **212** | **51.9** | **平衡**（`--auto-lock` 也选了它） |
+  | 1750 | 810 | 0 | 11.27 | 299 | 37.7 | |
+  | 1800 | 810 | +150（auto-uv，边界 +180） | 11.49 | 268 | 42.9 | |
+  | **不锁定** | **810** | 0 | **11.54** | **332** | **34.8** | **最高算力**（约 1800 MHz） |
+  | 1400 | 默认 | 0 | 9.13 | 221 | 41.3 | 显存 810 省 57 W |
+  | 不锁定 | 默认 | 0 | 11.13 | 349 | 31.9 | 受功耗墙限制：比显存 810 更慢 |
+
+  `--lock-cclock 1600 --lock-mclock 810 --auto-uv`（能效最佳），`1700`（平衡），只用 `--lock-mclock 810` 不锁核心（最高）。
+  1400 及以下核心电压已在下限（auto-uv：+120，−4 W）；约 1500 起降压才有明显收益。
+
+  **RTX 4070 Laptop**（Windows 11，接电源，无管理员：不能控制频率）：不限温 4.80 GH/s、63 W、**77 MH/W**，驱动自己把温度维持在
+  86–87 °C（自身温控降频，约 1700 MHz）。`--temp-limit` 以算力为代价降温（5f）：限 75 → 1.78 GH/s、38 W、47 MH/W；限 70 →
+  1.5 GH/s、32 W、46 MH/W；在这台笔记本上限 80 没有用处（它本来就在 86–87 °C，突发更热）。以上为 0.5.4 控制器重新调整（软启动、
+  连续 3 次读数才停止）之前的测量；重新调整在该笔记本的模型上测试过，尚未在笔记本本身上测试。
+- **显存频率：** 锁定 810（`--lock-mclock 810`；CMP 50HX：5001，见 5a）。SL 不需要显存带宽，默认显存频率只会增加功耗。
 
 ### 5a. GPU 频率控制（0.4.0 新增）
-ffgs 可以像 FreeForGemPear 一样设置挖矿显卡的频率：
+ffgs 可以设置挖矿显卡的频率：
 
 | 参数 | 作用 |
 |---|---|
 | `--lock-cclock N` | 将核心频率锁定为 N MHz（`nvidia-smi -lgc N,N`） |
-| `--lock-mclock N` | 将显存频率锁定为 N MHz（`nvidia-smi -lmc N,N`）；SL 不需要显存带宽，设为最低（RTX 30/40 为 810） |
+| `--lock-mclock N` | 将显存频率锁定为 N MHz（`nvidia-smi -lmc N,N`）；SL 不需要显存带宽，设为最低（RTX 30/40 为 810）。显卡不支持的频率会改用高于它的最低支持频率（0.5.3；CMP 50HX 没有 810：`memory clock 810 not supported, using 5001 (lowest supported)`） |
 | `--coffset N` / `--uv-offset N` | 核心 V/F 偏移（MHz）：锁定核心频率时，正偏移 = 同频率更低电压（降压） |
 | `--moffset N` | 显存频率偏移（MHz），可为负（驱动 555+） |
 | `--plimit W` | 功耗上限（瓦） |
 
-- 一个值适用于所有挖矿显卡；逗号分隔的列表按 `--devices` 顺序为每张卡指定。空值、`-` 或 `0` 表示该卡的该项不变：
-  `--devices 0,1,2 --lock-cclock 1400,,1560`。
+- 一个值适用于所有挖矿显卡；逗号分隔的列表按 `--devices` 顺序为每张卡指定（无 `--devices` 时按 nvidia-smi / HiveOS 顺序）。
+  空值、`-`、`0` 或 `x`（以及 `X`、`skip`）表示该卡的该项不变：`--devices 0,1,2 --lock-cclock 1400,,1560`。
+- **列表比 GPU 少时，最后一个值用于其余 GPU**（与 HiveOS 超频规则相同，0.5.4，日志会提示）；比 GPU 多、不是数字或超出范围
+  则启动时报错（代码 1，不做任何修改）。列表中**不要加空格**。
+- **`=0` 将偏移设为恰好 0**（仅 `--coffset`、`--moffset`；0.5.4）：`--coffset 325,=0`。单独的 `0` 仍表示“不修改”
+  （HiveOS 超频配置中 `0` 表示“设为 0”，此处请写 `=0`）。
+- 同样的列表规则也适用于 `--uv-min` / `--uv-max` / `--uv-step`（5c）和 `--temp-limit`（5f）。
+- **启动时每张 GPU 输出一行**（0.5.4），列出本次运行对其设置的内容（锁频、偏移、功耗上限、auto-uv 范围，使用 `--auto-lock`
+  时还有该卡是否参与锁频扫描）。**`--dry-run`** 只打印这些行后退出，不做任何修改（无需 root；指定 `--devices` 时无需 GPU）。
 - 需要 **root**（Linux）/ **管理员**（Windows）权限；否则 ffgs 输出一行提示并以当前频率继续挖矿。
 - 在启动自检之前应用（内核在新频率下校验）；每个值都会记录并回读，挖矿约 30 秒后输出显卡实际运行的频率。
 - **退出时恢复**：Ctrl-C、SIGTERM/SIGHUP、关闭控制台窗口、`--minutes`、致命错误。频率锁定恢复为驱动默认值，偏移和功耗上限恢复为修改前读取的值。
@@ -816,31 +1825,143 @@ ffgs 可以像 FreeForGemPear 一样设置挖矿显卡的频率：
   其他正在运行的 ffgs 的标记会被尊重，重启之前的标记会被丢弃。
 - 只修改 `--devices` 中的显卡，通过 PCI 总线号与 NVML 对应。NVML 在运行时加载，缺少它 ffgs 仍可挖矿。
 - `--oc-info` 只显示当前频率、偏移（及允许范围）和功耗上限，不做任何修改。
-- **不要与其他超频工具同时作用于同一张卡**（HiveOS 超频配置、MSI Afterburner、服务中的 `nvidia-smi`）：退出时 ffgs 会重置它设置的锁定，
-  也会清除其他工具先前设置的锁定。
+- **ffgs 的频率参数优先于其他超频工具（0.5.4）。** ffgs 在某张卡上设置的值（`--lock-cclock`、`--lock-mclock`、`--coffset`、
+  `--moffset`、`--plimit`、`--auto-uv` 的偏移、`--auto-lock` 的锁频）**即使 HiveOS 超频配置中是其他值也会保持**（HiveOS 在重启或修改超频后
+  应用其超频，可能晚于 ffgs 启动；MSI Afterburner / `nvidia-smi` 同理）。ffgs 每 10 秒在状态行的节拍中，把本来就为状态行读取的频率、偏移和功耗上限
+  与自己的值比较；不一致时重新设置自己的值（先锁频，后偏移；若频率或偏移高于 ffgs 的值，先短暂暂停该卡的计算）。每次事件一行橙色日志，
+  每张卡最多每 10 分钟一行（附中间次数）：`GPU0: core clock changed to 1680 MHz by another tool (HiveOS OC profile?) - ffgs's lock
+  1500 MHz wins, re-applied with the GPU paused`；频率表显示 `re-applied Nx`。跨越此类变化的 auto-uv 检查或 auto-lock 测量会被丢弃并重做。
+  在其他工具修改频率期间显卡崩溃（Xid）（该卡此类事件后 30 秒内、矿机任一卡 15 秒内，或崩溃时偏移 / 频率与 ffgs 的值不同）不计入降压失败：
+  橙色日志 `... crashed (Xid 43) while another tool changed its clocks (HiveOS OC?): ... - not counted against the undervolt`，
+  ffgs 照常重启。仅发现偏移被改时，ffgs 也会先重新设置自己的锁频（其他工具的锁频可能已生效）。
+  锁频无法读回，因此按频率判断：高于 ffgs 的锁频，或在挖矿时无功耗 / 温度原因且非 `--temp-limit` 降频却明显低于锁频（连续 2 次读数）。
+  ffgs 不设置的卡和值（`x`、未给参数）交给 HiveOS / 其他工具。表格和 HiveOS h-stats 显示显卡的实际频率。开销：每卡每节拍几微秒
+  （无额外线程；使用 `--plimit` 时多一次功耗上限读取）。
+- **退出时** ffgs 恢复**它自己**启动时看到的值（偏移、功耗上限），并重置它设置的锁频。若 HiveOS 在 ffgs 启动后才应用超频，恢复的是
+  HiveOS 超频之前的状态，而不是超频配置；下次矿工启动时 HiveOS 会再次应用其超频。
 - Windows：在 `start.bat` / `start-saseulmine.bat` / `start-saseulpool.bat` 中设置 `LOCK_CCLOCK`、`LOCK_MCLOCK`、`COFFSET`、`MOFFSET`、`PLIMIT`；设置任一项时，
   脚本会请求以管理员身份重新打开（默认 `AUTO_ELEVATE=1`）。
 
-**RTX 3070 实测（0.5.0）：** `--lock-cclock 1400 --lock-mclock 810 --coffset 325` → 在 40 位十六进制矿池（Kavatar、saseulmine、单人）**5.05 GH/s，74 W（68 MH/W）**，16 位矿池 4.65 GH/s；
-`--lock-cclock 1560` 约 5.1 GH/s，约 110 W。详见 README 调优表。
+**各显卡实测设置**（RTX 3070、RTX 3080 Ti、RTX 4070 Laptop）：见上方第 5 节的表格。RTX 3070 能效最佳：
+`--lock-cclock 1500 --lock-mclock 810 --auto-uv`。
 
-### 5c. 自动降压 `--auto-uv`（0.5.1 新增）
-ffgs 可以自动寻找降压值（与 FreeForGemPear 相同的调优器）：以 15 MHz 为步长提高每张 NVIDIA 显卡的核心 V/F 偏移，
-逐步校验，最终保留最后一个通过的步长再减去一步作为余量。
+### 5c. 自动降压 `--auto-uv`（0.5.1 新增，0.5.3 起按锁频分别保存）
+ffgs 可以自动寻找降压值：提高每张 NVIDIA 显卡的核心 V/F 偏移，逐步校验，
+最终保留最后一个通过的偏移再减去 15 MHz 作为余量。
 
-    sudo ./ffgs --wallet <地址>.<矿机名> --lock-cclock 1400 --lock-mclock 810 --auto-uv
+    sudo ./ffgs --wallet <地址>.<矿机名> --lock-cclock 1500 --lock-mclock 810 --auto-uv
 
-- **需要锁定核心频率**（`--lock-cclock` 或 HiveOS 超频配置中的锁定）：这时偏移越高 = 同频率下电压越低。仅 NVIDIA，需要 root / 管理员权限。
-- **首次启动：** 在起始偏移上预热校验 2 分钟，之后每步 30 秒直到 `--uv-max`，再确认 2 分钟；所有显卡同时进行，完成后才开始挖矿（约 10–15 分钟）。
-  **之后的启动：** 校验 20 秒后直接使用保存的偏移。
+- **需要锁定核心频率**（`--lock-cclock`、HiveOS 超频配置中的锁定或 `--auto-lock`，见 5e）：这时偏移越高 = 同频率下电压越低。仅 NVIDIA，需要 root / 管理员权限。
+- **粗到细（0.5.4）：** 偏移以 **30 MHz** 步长上升（`--uv-coarse`）；某一步失败时，回到最后一个通过的偏移，只在该 30 MHz 区间内
+  测试 **+15 MHz** 一点（多一步），再留 15 MHz 余量。结果与 15 MHz 逐步搜索相同，步数约减半。（不采用自上而下：最先测试的正是最容易让显卡崩溃的偏移。）
+- **新锁频从已知配置开始（0.5.4）：** 若该卡有更高（或相同）核心锁频、相同显存锁频的已验证配置，起点 = **该配置偏移 - 30**（而非 +120，
+  取最近的锁频）。预热照常校验起点。使用 `--uv-min`、崩溃后、不能提高起点时，或该配置结束于**电压下限**或其自身起点时不启用
+  （更低的频率更早到达下限，沿用该偏移只会减少余量；日志：`... ended on the voltage floor: not starting from it`）。
+- **调优：** 在起始偏移上预热校验 2 分钟，之后每步约 30 秒，再确认 2 分钟：通常 **约 3.5–11.5 分钟**（固定部分即预热 + 确认约 4.3 分钟；
+  已知更高锁频配置的第二个锁频约 6.5 分钟；0.5.3 最多约 16.5 分钟）。**只有正在调优的显卡等待，
+  其他显卡同时挖矿**，每张卡在自己的调优结束后立即开始挖矿（0.5.3；之前所有卡都要等全部完成）。日志显示进度（`step +340 (2/12): ok`），
+  状态行在该卡算力后显示标记（`GPU1 0.000 [tuning +340, step 2/12]`），约每分钟一行汇总（`auto-uv: tuning 2 GPU(s) (GPU1, GPU3), ~6 min left`）。
+  调优以 `RESULT:` 行结束。颜色（`--color`）：进度青色，通过的校验和结果绿色，回退黄色，失败红色。
+- **电压下限：** 若连续两步每步节省过少（每 15 MHz 0.5 W，即 30 MHz 步 < 1 W），搜索在它们之下停止，而不是一直升到 `--uv-max`（电压已到最低，更高的偏移只会吃掉余量）。
+  若搜索到达 `--uv-max` 仍未失败，日志会说明并给出节省的功耗。
+- **起始偏移校验失败**时不会保留：ffgs 以 30 MHz 为步长向下，直到第一个通过的偏移并在其上挖矿（也可能低于您自己的偏移）。
+- **按锁频分别保存（0.5.3）：** 结果按显卡、型号、驱动 **和核心锁频** 保存（`1400/mem810` = `--lock-cclock 1400 --lock-mclock 810`；
+  若 ffgs 未锁频，则由挖矿负载下的核心频率选择配置，`~1410`）。切换锁频再切回时，各自的配置会被重用。在 `--uv-reval-hours` 内校验过的配置
+  **立即应用**（该卡立即挖矿）；更早的、来自其他 ffgs 版本的或崩溃后降低的配置先校验 20 秒（只有该卡等待）。没有本版本 ffgs 校验基准的配置（来自 0.5.1 / 0.5.2、
+  其他 ffgs 版本或不同的 `--blocks` / `--threads`）先在其下限偏移上用 60 秒建立新基准，再校验 20 秒：约 85 秒；状态标签先显示
+  `[reference +240]`，再显示 `[check +300]`，日志中也有说明。0.5.1 / 0.5.2 的结果成为其调优时
+  频率的配置，经校验后用于相近的锁频。
 - **校验**在独立进程中以满负载运行挖矿内核、使用固定测试任务：每次启动的候选数必须与基准完全一致（显卡哪怕算错一个哈希也会在几秒内暴露），
   每个保存的候选都在 CPU 上重新计算。显卡崩溃或卡死只会结束该进程。
-- **挖矿过程中：** 出现硬件错误（bad candidate）时回退 15 MHz（并保存）；每 6 小时复查 20 秒（期间该卡暂停）。若偏移被其他程序修改（HiveOS 超频），auto-uv 不再管理该卡。
-- 结果保存在程序旁的 `ffgs-uv-results.txt`（HiveOS：`/hive-config/ffgs`，矿工更新后仍保留），按显卡、型号和驱动区分。若 ffgs 在某一步崩溃（kill、Xid、断电），
-  下次启动会恢复偏移并在该步以下重新调优。退出时与 `--coffset` 一样恢复原偏移。
-- 参数：`--uv-min MHz`（起点；默认当前偏移，否则 +120，RTX 40/50 至少 +200），`--uv-max MHz`（默认 +495），`--uv-step MHz`（15），
-  `--uv-reset`（清除结果重新调优），`--uv-reval-hours H`（6，0 = 不复查）。Windows：启动脚本中 `AUTO_UV=1`。
-- **RTX 3070 实测**（锁定 1400/810，起点 +250）：+385 以内全部通过，+400 失败（少一个候选）→ **+370**，功耗 73 W（+250 时 76 W）；Kavatar 上 5.04 GH/s、69 MH/W、0 拒绝。
+- **挖矿过程中：** 出现硬件错误（bad candidate）时回退 15 MHz（保存，下次启动时校验）；每 6 小时复查 20 秒（期间该卡暂停）。若偏移被其他程序修改
+  （HiveOS 超频），ffgs 会重新设置自己的值（见 5a；0.5.4 起，之前 auto-uv 会放弃该卡）。GPU 故障（Xid）：见 5d。
+- 结果保存在程序旁的 `ffgs-uv-results.txt`（HiveOS：`/hive-config/ffgs`，矿工更新后仍保留）。若 ffgs 在某一步崩溃（kill、Xid、断电），
+  下次启动会恢复偏移并在该步以下重新调优；校验期间停止 ffgs（Ctrl-C、HiveOS 停止矿工）不算失败。退出时与 `--coffset` 一样恢复原偏移。
+- 参数：`--uv-min MHz`（起点；默认当前偏移，否则 +120，RTX 40/50 至少 +200；或上述更高锁频的提示），`--uv-max MHz`（默认 +495），
+  `--uv-step MHz`（15：**细步长**，即结果精度、余量与回退），`--uv-coarse MHz`（0.5.4 新增，上升步长，默认 2 × `--uv-step`；
+  `--uv-coarse 15` 或不大于细步长 = 0.5.3 的单一步长），`--uv-reset`（清除当前锁频的配置并重新调优；其他锁频的配置保留），
+  `--uv-reset-all`（清除**本次运行的显卡**的所有配置，所有锁频；自 0.5.4 起文件中其他显卡的行保留——混合矿机或两个 ffgs 进程共用
+  `/hive-config/ffgs` 时不会互相清除），`--uv-reval-hours H`（6，0 = 不复查）。在得出结果前停止的调优不会在文件中留下行。`--uv-min`、`--uv-max`、`--uv-step` 支持**按 GPU 的列表**
+  （0.5.4，规则见 5a）：`auto` = 默认值，空项 / `-` / `x` = **该卡不做自动降压**（例如 `--uv-max 400,x`）。
+  Windows：启动脚本中 `AUTO_UV=1`。`--uv-reset` / `--uv-reset-all` 只作用一次：GPU 故障后的自动重启（5d）不会重复执行。
+- 除了更高锁频的提示外，起点不按锁频选择：同型号显卡的边界差异太大（RTX 3070 在 1700：+345 … +375）。起点仍是您当前的偏移
+  （例如 `--coffset 325`）；起点失败只多花几次校验。各锁频实测结果见第 5 节的表格。
+
+### 5d. GPU 故障（0.5.3 新增）
+以前 GPU 故障（驱动 Xid 13 / 43，"an illegal memory access"）会使 ffgs 退出，HiveOS 又把它重启到同样的故障中。现在：
+- 通过驱动的 Xid 事件找出出错的显卡并记录：`faults: GPU4 (bus 0000:04:00.0, RTX 3070) FAILED: Xid 43 reported by the driver for this GPU`；
+  它与当时的偏移一起记入 `ffgs-gpu-faults.txt`（程序旁；HiveOS：`/hive-config/ffgs`）；
+- 其他显卡尽可能继续挖矿；若没有工作线程剩下（或 GPU 卡死，见 5g），ffgs 恢复频率并**自行重启**，每小时最多 12 次：
+  Linux 为同一进程和日志（exec），超过上限后退出，由 HiveOS 照常重启；Windows（0.5.4）为以代码 2 退出、由 `start.bat` 在 10 秒后重新启动
+  （约 20 秒后所有显卡恢复挖矿），重启时间记录在状态目录的 `ffgs-restarts.txt`（与 `ffgs-uv-results.txt` 同目录），距上次 120 秒内的启动
+  视为该次重启，因此每小时 12 次的上限有效：超过后 ffgs 等到本小时最早的一次重启过期再退出。`--uv-reset`、`--uv-reset-all`、
+  `--auto-lock-reset` 在这类重启中不会重复执行；
+- **使用 `--auto-uv` 时：** 在降压偏移上崩溃的显卡校验 20 秒后以**低 30 MHz** 的偏移恢复（不从头调优；配置更新）。在自身（保留的）偏移上连续
+  2 次启动都崩溃的显卡，每 2 次崩溃降低 60 MHz，直到 0，然后被排除；
+- **不使用 `--auto-uv` 时：** ffgs 不修改偏移；连续 2 次启动都崩溃的显卡**被排除挖矿一小时**（`... is LEFT OUT of mining ...`），其他显卡继续；
+  若所有显卡都被排除，ffgs 等待而不是退出（不会循环重启）；
+- **无法打开的显卡（0.5.4）**：`CUDA-capable device(s) is/are busy or unavailable`，常伴随每次尝试都出现 Xid 38（例如上一个矿工
+  停止时出错之后）——这**不是**降压或偏移故障：不记录，偏移和 auto-uv 配置保持不变。ffgs 只记录一次日志（`GPU1 ... cannot be
+  opened (...): likely needs a GPU reset or a reboot; left out, the other GPUs mine ...`），状态行显示 `[unavailable]`
+  （API：`"state":"unavailable"`），1、5、15 分钟后重试，之后每 15 分钟一次；能打开后立即挖矿。该卡的调优或校验同样等待，并在同一偏移继续。
+  通常只有重启才能恢复。
+- 无故障挖矿 30 分钟后计数清零。删除 `ffgs-gpu-faults.txt` 会立即清除所有记录。
+
+### 5e. 自动选择核心锁频 `--auto-lock`（0.5.4 新增）
+ffgs 为每张 NVIDIA 显卡自行选择核心锁频：在多个锁频下挖矿（每个锁频使用自己的降压配置，见 5c），测量算力与功耗，
+保留算力损失不超过最高值 10 % 的最节能锁频。
+
+    sudo ./ffgs --wallet <地址>.<矿机名> --lock-mclock 810 --auto-lock
+
+- 仅 NVIDIA，需 root / 管理员。`--auto-lock` 自动开启 `--auto-uv`；`--lock-mclock`、`--moffset`、`--plimit` 照常有效（显存锁频是保存键的一部分）。
+- **与 `--lock-cclock` 同时使用：** 有自己 `--lock-cclock` 值的显卡（一个值 = 所有卡；按 GPU 列表 = 这些卡）保持该锁频、**不参与扫描**，
+  其余显卡参与。例如 `--lock-cclock 1400,x --auto-lock` 只扫描 GPU1。所有卡都有值时不扫描（警告）。`--uv-*` 列表中为 `x`（不做自动降压）
+  的显卡也不扫描。启动时的每卡设置行（5a）在 `auto-lock` 列中显示。
+- 每张卡从高到低依次尝试锁频（默认 1800…1200 MHz，步长 100，不超过显卡最高频率；`--auto-lock-range 1200-1700:100` 或列表 `1300,1450,1600`）。
+  每个锁频先由 auto-uv 应用/调校该频率的降压配置（新锁频从更高锁频配置 - 30 开始，约 5–12 分钟；只有该卡暂停），然后该卡**正常挖矿**
+  45 秒稳定 + 120 秒测量（份额照常提交），记录 GH/s、功耗、核心频率。其他显卡始终在挖矿，所有卡并行扫描。
+- 选择：`--auto-lock-goal eff`（默认）= 在最高 GH/s 的 `--auto-lock-max-loss`（10 %）范围内 MH/W 最好的锁频；`speed` = 最高 GH/s。
+  低于阈值后不再测更低的锁频。
+- 频率未能保持（功耗/温度限制）、硬件错误、挖矿不稳定的点无效；驱动拒绝、auto-uv 失败、GPU 故障的锁频记为 `FAILED`；
+  在某锁频期间 ffgs 崩溃，则下次启动将其标记为 `crashed` 不再尝试。不支持锁频的显卡（部分笔记本）：回退为当前频率下的 auto-uv。
+- 日志中以表格给出结果，扫描期间状态行显示 `[auto-lock 1700, 2/7: measuring]`。结果按显卡、型号、驱动、显存锁频保存在 `ffgs-autolock.txt`
+  （HiveOS：`/hive-config/ffgs`），下次启动直接应用；修改 goal / max-loss 时从已保存的点重新选择；`--auto-lock-reset` 重新测量（自动重启不会重复）。
+- 与 `--temp-limit`（5f）同时使用时，auto-lock 管理的锁频不会被降低（只用空闲间隔/停止）；锁频变化期间卡死看门狗（5g）暂停判定，并在新锁频下重新建立基线。
+- HiveOS：在 Extra config arguments 中加入 `--auto-lock`，OC 配置中核心锁频留空。Windows：启动脚本中 `set AUTO_LOCK=1`（对 `AUTO_ELEVATE` 算作频率设置）。
+
+### 5f. 温度保护 `--temp-limit`（0.5.4 新增；主要用于笔记本）
+**主要用于笔记本和移动 GPU。** 笔记本 GPU 与 CPU 共用散热、风扇不可调，长时间挖矿会一直停在 GPU 自身的降频点（约 87 °C）。
+`--temp-limit` 通过减少工作量让它更凉。台式矿机通常靠风扇（HiveOS autofan）控温，不需要此功能。
+- `--temp-limit C[,C...]`：保持 GPU 不高于 C（40..100；一个值或按 GPU 列表，`0` / 空 = 该卡关闭）。软启动：以 30% 工作比例开始并逐步提高
+  （笔记本核心温度传感器约 1 秒就跟随功率变化，直接 100% 启动曾超出限制 15–25 °C）。在 C-3（滤波后读数）进入限制状态，控制器调整工作比例
+  （10–100 %，每秒最多 +5% / −20%，读数经过数秒滤波），让温度稳定在 C-2..C-1。工作比例以启动之间的空闲间隔实现，无需管理员权限，笔记本和 AMD 都可用。示例：`ffgs.exe --wallet ... --temp-limit 80`，
+  或启动脚本中 `set TEMP_LIMIT=80`。
+- 若 ffgs 自己锁定了核心频率（`--lock-cclock`，root / 管理员，NVIDIA）且该 GPU 上没有 ffgs / auto-uv 的偏移，则先降低该锁定频率
+  （最低为锁定值的 60%、不低于 800 MHz），更低时才加空闲间隔。使用 `--auto-uv` / `--coffset` 或 `--auto-lock`（5e）时不降低锁频。
+- 回差：全速且温度 ≤ C-5 持续 30 秒后恢复全速（日志一行）。`--temp-stop C2`（默认 min(C+10, 90)，至少 C+3）：任一传感器连续 3 次读数达到停止温度
+  （或一次高出 5 °C）即停止挖矿，所有传感器降到各自限制以下 6 °C（或停止 60 秒后降到以下 3 °C）后以 30% 恢复并逐步提高。单次 1 秒尖峰不会触发停止。
+- 代价（如实说明）：没有管理员权限时只能用空闲间隔，而 GPU 在运行的瞬间仍处于满加速频率（驱动自身的温控降频在间隔中被解除），因此限温以算力**和**能效为代价换取更低的温度和噪音。
+  RTX 4070 Laptop 实测（Windows、接电源、无管理员）：不限温 4.80 GH/s、63 W、**77 MH/W**（驱动自己维持 86–87 °C）；`--temp-limit 75` / `70`：1.5–1.8 GH/s、32–38 W、**约 47 MH/W**（为本节所述 0.5.4 控制器重新调整之前的测量；重新调整在该笔记本的模型上测试过）。
+  它用于让笔记本更凉更安静，而不是提高每瓦产出。有管理员 / root 权限并使用 `--lock-cclock` 时，ffgs 会先降低锁定频率，能效明显好于空闲间隔。
+- `--temp-mem` / `--temp-hotspot`：驱动提供时的显存 / 热点限制（默认 C+15）；`--temp-no-clocks`：只用空闲间隔。
+- 传感器：NVIDIA 用 NVML 核心温度（显存温度仅部分卡提供，NVML 无热点）；AMD Linux 用 amdgpu hwmon（edge / junction / mem）；AMD Windows 本版本无传感器（该卡不启用）。
+- 状态行显示 `[temp-limit 72%]` / `[temp-limit 1290 MHz]` / `[temp-stop 91 C]`，日志只记录状态变化；显示和上报的是真实算力；GPU 不挖矿时（temp-stop、矿池离线）显示 0 和 0.0 MH/W（表格中为 `-`）。
+- 测试钩子 `FFGS_TEST_TEMP`（仅供开发）替换的是温度*读数*：此时真实 GPU 完全不受保护（与不限温一样发热），只能在冷卡上短时间使用。
+- 与 auto-uv 配合：检查前等待降温，检查中达到停止温度会在降温后重试。卡死看门狗（5g）不会判定被 `--temp-limit` 限速或停止的显卡。
+
+### 5g. GPU 卡死看门狗（0.5.4 新增）
+5d 只在 GPU 工作线程因 CUDA 错误**停止**且驱动报告 Xid 时处理。GPU 也可能“安静地”失效：内核启动不返回（**挂起**：无错误、无 Xid），
+或只以很低的速度工作（**掉速**）。
+- **挂起**：工作线程 `--watchdog-hang` 秒（默认 60；打开 GPU 时 180）没有进展 → 作为无 Xid 故障记录（含核心偏移），即使其他显卡仍在挖矿，
+  ffgs 也会自行重启（见 5d：Linux exec，Windows 退出码 2 + `start.bat`；每小时最多 12 次）；下次启动按记录处理：`--auto-uv` 下偏移降低 30 MHz，
+  否则连续 2 次则排除 1 小时。超过上限时其他 GPU 继续挖矿，挂起的显卡等待下次启动。
+- **掉速**：10 秒算力低于自身基线（最近 10 分钟正常样本的中位数）的 `--watchdog-drop`%（默认 30）持续 `--watchdog-minutes` 分钟（默认 3）
+  → 重启该 GPU 的工作线程并重置 CUDA 上下文（auto-uv 已调偏移先降低 30 MHz），其他显卡继续；一小时内第 3 次按挂起处理。
+- **不判定**：调优/检查暂停、无任务、矿池离线、开发费/推荐分钟、工作线程重启；auto-uv 修改偏移或 auto-lock 修改锁频期间（锁频变化后重新建立基线）；
+  被 `--temp-limit` 限速或停止的显卡。NVML 报告硬件/驱动降频（HW slowdown、thermal、power brake）期间的掉速**只记录日志**（每 10 分钟一次），不重启。
+  超过半数 GPU（至少 2 张）同时掉速视为整机问题，只记录日志。
+- 选项：`--watchdog-hang`、`--watchdog-drop`、`--watchdog-minutes`、`--no-watchdog`。日志行以 `watchdog:` 开头；状态行显示 ` [wd 1h 2s]`；
+  API（3d）的 `watchdog` 字段给出计数。
 
 ### 5b. AMD 显卡（0.4.0 新增）
 同一个 `ffgs` / `ffgs.exe` 也可通过 OpenCL 在 AMD Radeon 显卡上挖矿（针对 RDNA2 优化）：

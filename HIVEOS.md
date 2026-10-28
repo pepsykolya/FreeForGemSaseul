@@ -24,17 +24,15 @@ minute. **Your own wallet there = total fee 1%.** Without it the referral minute
 2. **Flight Sheets** → **Import from Clipboard** (below the flight sheet name) and paste:
 
 ```json
-{"name":"ffgs SL Kavatar","isFavorite":false,"items":[{"coin":"SL","pool_ssl":false,"pool_urls":["sl.kasplay.online:3333"],"dpool_ssl":false,"miner":"custom","miner_alt":"ffgs","miner_config":{"url":"sl.kasplay.online:3333","algo":"saseul","pass":"","miner":"ffgs","template":"%WAL%.%WORKER_NAME%","install_url":"https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.0/ffgs-0.5.0.tar.gz","user_config":""},"pool_geo":[]}]}
+{"name":"ffgs SL Kavatar","isFavorite":false,"items":[{"coin":"SL","pool_ssl":false,"pool_urls":["sl.kasplay.online:3333"],"dpool_ssl":false,"miner":"custom","miner_alt":"ffgs","miner_config":{"url":"sl.kasplay.online:3333","algo":"saseul","pass":"","miner":"ffgs","template":"%WAL%.%WORKER_NAME%","install_url":"https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.4/ffgs-0.5.4.tar.gz","user_config":""},"pool_geo":[]}]}
 ```
 
 3. The imported sheet has no wallet (the format carries none): pick your `SL` wallet in the red-marked field, then
    **Create flight sheet** and apply it to the rig. `%WAL%` becomes your address and `%WORKER_NAME%` the rig's name in
    HiveOS, so the pool sees `<address>.<rig name>`.
 
-The format is the one other custom miners publish for this button (plain JSON, not base64; same field names as in
-e.g. https://github.com/derhier/yskar-hiveos and
-https://unmineable.com/support/article/how-to-setup-pearl-pow-mining-on-hiveos). We have not imported this exact sheet on
-a HiveOS account yet; if HiveOS refuses it, use the manual way below — the result is the same.
+The format is the plain JSON (not base64) that HiveOS's *Import from Clipboard* takes. If HiveOS refuses it, use the
+manual way below — the result is the same.
 
 ### Flight sheet: manual way
 
@@ -45,7 +43,7 @@ a HiveOS account yet; if HiveOS refuses it, use the manual way below — the res
 | Field | Value |
 |---|---|
 | Miner name | `ffgs` (filled in automatically from the URL) |
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.0/ffgs-0.5.0.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.4/ffgs-0.5.4.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
 | Pool URL | `sl.kasplay.online:3333` (or another pool from the table) |
@@ -59,18 +57,68 @@ The dashboard shows the hashrate per GPU (GH/s), temperatures, fans and accepted
 
 ### NVIDIA overclocking
 
-SL is pure compute — set the **memory clock to the minimum** (e.g. `-1000` / `405`), lock the core (RTX 3070:
-1400 MHz for the best H/W, up to 1560 MHz for more hashrate) and use `--eco` on undervolted rigs. Normally set the
-clocks in the HiveOS **Overclocking** profile. Alternatively ffgs can set them itself: put e.g.
-`--lock-cclock 1400 --lock-mclock 810 --coffset 325` into *Extra config arguments* (HiveOS runs miners as root; a comma
-list sets one value per GPU). **Use one or the other per card, not both**: when the miner stops, ffgs resets the locks
-it set, which also removes the HiveOS lock until HiveOS applies its OC again. For cards that should keep the HiveOS OC,
-leave their entry empty (`--lock-cclock 1400,,1400`) or do not use the ffgs options.
+SL is pure compute: lock the **memory at 810** (CMP 50HX: 5001) and lock the core. **Recommended (measured, MANUAL 5):**
+
+| GPU | Best MH/W | Balance | Max hashrate |
+|---|---|---|---|
+| RTX 3070 | **1500** + `--auto-uv`: 5.62 GH/s, 76 W, 73.9 MH/W | 1700 + `--auto-uv`: 6.40 GH/s, 106 W | 1800 + `--auto-uv`: 6.74 GH/s, 121 W |
+| RTX 3080 Ti | **1600** + `--auto-uv`: 10.32 GH/s, 180 W, 57.4 MH/W | 1700 + `--auto-uv`: 10.98 GH/s, 212 W | core not locked: 11.54 GH/s, 332 W |
+
+The simplest way: let ffgs set the clocks and find the undervolt — *Extra config arguments*
+`--lock-cclock 1500 --lock-mclock 810 --auto-uv` (RTX 3070) with **no core lock, core offset or memory clock for these
+cards in the HiveOS OC profile** (HiveOS runs miners as root; a comma list sets one value per GPU, e.g.
+`--lock-cclock 1500,1600` for a 3070 + 3080 Ti rig), or `--lock-mclock 810 --auto-lock` to let ffgs choose the lock
+per card. **If the extra config arguments set clocks, ffgs keeps them even if the HiveOS OC profile has other
+values** (0.5.4: HiveOS may apply its OC after the miner started; ffgs then sets its own lock / offset / power limit
+again within 10 s and logs it in orange, `... by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins,
+re-applied`). You do not have to clear the OC profile, but its clock values are not used on those cards. When the miner
+stops, ffgs resets the locks it set and puts back the offsets it found at its start; HiveOS applies its OC again at the
+next start. For cards that should keep the HiveOS OC, leave their entry empty or `x` (`--lock-cclock 1500,x,1500`) or
+do not use the ffgs options. If you keep the clocks in the OC profile instead,
+use the same values (core lock 1500, memory 810) and add only `--auto-uv`.
+
+**Updating from 0.5.2 (or older) with an undervolt:** 0.5.2 resets the clocks while the GPUs still mine; stopping it at
+a high offset can cause an Xid / a hung GPU (seen once on a 3070 at the switch: that card stayed "busy or unavailable"
+until a reboot). That last stop is still done by 0.5.2 itself; if a card then shows `[unavailable]` or does not mine,
+reboot the rig (0.5.4 keeps its undervolt profiles and does not lower them for it).
 
 **Auto undervolt (0.5.1):** add `--auto-uv` to *Extra config arguments* (with the core clock locked by the HiveOS OC
-profile or `--lock-cclock`; leave the OC profile's core offset as the starting point). The first start tunes
-~10–15 min before mining, the result is kept in `/hive-config/ffgs` and reused (20 s check) after reboots and miner
-updates. Example: `--referrer <your address> --lock-cclock 1400 --lock-mclock 810 --auto-uv`. MANUAL 5c.
+profile or `--lock-cclock`; leave the OC profile's core offset as the starting point). Since 0.5.3 only the card being
+tuned (0.5.4: typically ~3.5–11.5 min) waits, the other cards mine meanwhile; the result is kept per core clock lock in `/hive-config/ffgs`
+and applied at once after reboots and miner updates (a 20 s check of that card when it is older than
+`--uv-reval-hours`). `--uv-reset` forgets the profile of the current lock, `--uv-reset-all` every profile of this miner's cards (0.5.4: the
+profiles of other cards in `/hive-config/ffgs` stay). Example:
+`--referrer <your address> --lock-cclock 1500 --lock-mclock 810 --auto-uv`. MANUAL 5c.
+
+**Efficiency in the dashboard (0.5.3):** the miner version column shows the rig's MH/W next to the version
+(`0.5.4 64.7 MH/W`), from the total hashrate and the NVIDIA board power ffgs reads (not shown when a process has no power
+reading, e.g. AMD).
+
+**GPU faults (0.5.3):** a card that faults (Xid) is named in the log (`faults: GPU4 ... FAILED: Xid 43`), and ffgs
+restarts itself instead of leaving it to HiveOS; with `--auto-uv` that card comes back 30 MHz lower, without it a card
+that keeps crashing is left out for an hour while the others mine (MANUAL 5d). The record is `/hive-config/ffgs/ffgs-gpu-faults.txt`.
+
+**CMP cards:** `--lock-mclock 810` is not supported on CMP 50HX (its memory clocks are 7001 / 5001 / 405); since 0.5.3
+ffgs then locks 5001, the lowest supported clock above 810, and says so in the log.
+
+**New in 0.5.4 (Extra config arguments):**
+- **Several lines** in *Extra config arguments* are fine since 0.5.4 (they are joined into one line; before, everything
+  after the first line was dropped, e.g. `--referrer`).
+- **Lists without spaces:** `--lock-cclock 1500,1600 --coffset 325,x` (HiveOS splits the arguments at spaces;
+  `1500, 1600` would become two arguments). A shorter list repeats its last value, as in the HiveOS OC profile, but an
+  offset of `0` means "leave alone" in ffgs; write `=0` to set exactly 0. `--dry-run` in the HiveOS shell
+  (`/hive/miners/custom/ffgs/ffgs --lock-cclock ... --dry-run`) shows what would be set per card. MANUAL 5a.
+- **`--auto-lock`** (e.g. `--auto-lock --lock-mclock 810`): ffgs chooses the core lock per card. Leave the **core clock
+  lock empty in the HiveOS OC profile** (ffgs sets the lock and resets it on exit). A card with its own `--lock-cclock`
+  value keeps it and is not swept. The result is kept in `/hive-config/ffgs/ffgs-autolock.txt`. MANUAL 5e.
+- **`--api 4068`**: h-stats.sh then reads hashrates, uptime, shares and watts from the local API (log parsing stays the
+  fallback). On a mixed NVIDIA + AMD rig `h-run.sh` gives the AMD process `--api 4069` (PORT+1, the host is kept) and
+  h-stats reads both. MANUAL 3d.
+- **`--temp-limit`** is meant for laptops / mobile GPUs; desktop rigs keep their temperatures with fans (HiveOS
+  autofan) and do not need it. MANUAL 5f.
+- The GPU stall watchdog (MANUAL 5g) and the pool failback / no-accepted-shares watchdog (MANUAL 3c, with several Pool
+  URLs) are on by default; `--no-watchdog`, `--failback-minutes 0`, `--noshare-minutes 0` turn them off.
+  `--no-update-check` turns off the new-version log line.
 
 ### AMD rigs
 
@@ -157,8 +205,8 @@ Own SASEUL node + the solo proxy (MANUAL.md section 8): Pool URL `NODE_IP:19310`
 3. В импортированном листе нет кошелька (формат его не содержит): выберите свой кошелёк `SL` в подсвеченном красным поле,
    **Create flight sheet** и примените лист к ригу. Пул увидит `<адрес>.<имя рига в HiveOS>`.
 
-Формат тот же, что публикуют другие custom-майнеры для этой кнопки (обычный JSON, не base64). Именно этот лист на
-аккаунте HiveOS ещё не импортировали; если HiveOS его не примет — ручной способ ниже, результат тот же.
+Формат — обычный JSON (не base64), который принимает *Import from Clipboard* в HiveOS. Если HiveOS его не примет —
+ручной способ ниже, результат тот же.
 
 ### Полётный лист: вручную
 
@@ -169,15 +217,69 @@ config arguments пустые). Лог майнера: `miner log` или `/var/
 
 ### Разгон NVIDIA
 
-SL — чистые вычисления, **память в минимум** (`-1000` / `405`), ядро зафиксировать (RTX 3070: 1400 МГц — лучший H/W,
-до 1560 МГц — больше хешрейта), на андервольте — `--eco`. Обычно частоты задают в OC-профиле HiveOS. Либо ffgs
-выставляет их сам: `--lock-cclock 1400 --lock-mclock 810 --coffset 325` в *Extra config arguments*. **На одной карте —
-что-то одно**: при остановке майнера ffgs снимает свои фиксации, а с ними и фиксацию HiveOS.
+SL — чистые вычисления: **память фиксировать на 810** (CMP 50HX: 5001), ядро зафиксировать. **Рекомендуем (замеры,
+MANUAL 5):**
+
+| Карта | Лучший MH/W | Баланс | Максимум хешрейта |
+|---|---|---|---|
+| RTX 3070 | **1500** + `--auto-uv`: 5,62 GH/s, 76 Вт, 73,9 MH/W | 1700 + `--auto-uv`: 6,40 GH/s, 106 Вт | 1800 + `--auto-uv`: 6,74 GH/s, 121 Вт |
+| RTX 3080 Ti | **1600** + `--auto-uv`: 10,32 GH/s, 180 Вт, 57,4 MH/W | 1700 + `--auto-uv`: 10,98 GH/s, 212 Вт | без фиксации ядра: 11,54 GH/s, 332 Вт |
+
+Проще всего — пусть ffgs выставит частоты и подберёт андервольт сам: *Extra config arguments*
+`--lock-cclock 1500 --lock-mclock 810 --auto-uv` (RTX 3070), а **в OC-профиле HiveOS для этих карт — без фиксации ядра,
+оффсета ядра и частоты памяти** (список через запятую — значение на каждую карту, например `--lock-cclock 1500,1600` для
+рига 3070 + 3080 Ti), либо `--lock-mclock 810 --auto-lock` — ffgs сам выберет фиксацию каждой карты. **Если частоты заданы
+в Extra config arguments, ffgs держит их, даже если в OC-профиле HiveOS другие значения** (0.5.4: HiveOS может
+применить OC уже после старта майнера; ffgs тогда в течение 10 с ставит свою фиксацию / оффсет / лимит мощности снова
+и пишет оранжевую строку `... by another tool (HiveOS OC profile?) - ffgs's lock 1500 MHz wins, re-applied`). Очищать
+OC-профиль не обязательно, но его частоты на этих картах не действуют. При остановке майнера ffgs снимает свои фиксации
+и возвращает оффсеты, которые застал при старте; HiveOS снова применит OC при следующем запуске. Картам, которые должны
+остаться на OC HiveOS, оставьте пустое значение или `x` (`--lock-cclock 1500,x,1500`) либо не задавайте опции ffgs. Если частоты остаются в
+OC-профиле — те же значения (ядро 1500, память 810) и только `--auto-uv`.
+
+**Обновление с 0.5.2 (и старше) с андервольтом:** 0.5.2 сбрасывает частоты, пока карты ещё майнят; остановка на высоком
+оффсете может дать Xid / зависшую карту (один раз видели на 3070 при переходе: карта осталась «busy or unavailable» до
+перезагрузки). Эту последнюю остановку делает ещё сам 0.5.2; если после неё карта показывает `[unavailable]` или не
+майнит — перезагрузите риг (0.5.4 сохраняет свои профили андервольта и не снижает их из-за этого).
 
 **Автоподбор андервольта (0.5.1):** добавьте `--auto-uv` в *Extra config arguments* (ядро зафиксировано OC-профилем
-HiveOS или `--lock-cclock`; оффсет ядра из OC-профиля станет стартовой точкой). Первый запуск подбирает ~10–15 мин до
-начала майнинга, результат хранится в `/hive-config/ffgs` и используется снова (проверка 20 с) после перезагрузок и
-обновлений майнера. Пример: `--referrer <ваш адрес> --lock-cclock 1400 --lock-mclock 810 --auto-uv`. MANUAL 5c.
+HiveOS или `--lock-cclock`; оффсет ядра из OC-профиля станет стартовой точкой). С 0.5.3 ждёт только подбираемая карта
+(0.5.4: обычно ~3,5–11,5 мин), остальные в это время майнят; результат хранится по фиксации частоты ядра в `/hive-config/ffgs` и
+применяется сразу после перезагрузок и обновлений майнера (проверка этой карты 20 с, если он старше `--uv-reval-hours`).
+`--uv-reset` забывает профиль текущей фиксации, `--uv-reset-all` — все профили карт этого майнера (0.5.4: профили других
+карт в `/hive-config/ffgs` остаются). Пример:
+`--referrer <ваш адрес> --lock-cclock 1500 --lock-mclock 810 --auto-uv`. MANUAL 5c.
+
+**Эффективность в панели (0.5.3):** в колонке версии майнера рядом с версией показывается MH/W рига (`0.5.4 64.7 MH/W`)
+— из общего хешрейта и мощности карт NVIDIA, которую читает ffgs (не показывается, если у процесса нет данных о
+мощности, например AMD).
+
+**Сбои GPU (0.5.3):** карта со сбоем (Xid) называется в логе (`faults: GPU4 ... FAILED: Xid 43`), и ffgs перезапускает
+себя сам, а не оставляет это HiveOS; с `--auto-uv` карта возвращается на 30 МГц ниже, без него карта, которая падает
+снова и снова, исключается на час, остальные майнят (MANUAL 5d). Запись — `/hive-config/ffgs/ffgs-gpu-faults.txt`.
+
+**Карты CMP:** `--lock-mclock 810` на CMP 50HX не поддерживается (её частоты памяти 7001 / 5001 / 405); с 0.5.3 ffgs
+тогда фиксирует 5001 — наименьшую поддерживаемую выше 810 — и пишет об этом в лог.
+
+**Новое в 0.5.4 (Extra config arguments):**
+- **Несколько строк** в *Extra config arguments* с 0.5.4 допустимы (склеиваются в одну; раньше всё после первой строки
+  терялось, например `--referrer`).
+- **Списки без пробелов:** `--lock-cclock 1500,1600 --coffset 325,x` (HiveOS делит аргументы по пробелам; `1500, 1600`
+  станет двумя аргументами). Короткий список повторяет последнее значение, как в OC-профиле HiveOS, но оффсет `0` в ffgs
+  значит «не трогать»; ровно 0 — `=0`. `--dry-run` в консоли HiveOS (`/hive/miners/custom/ffgs/ffgs --lock-cclock ...
+  --dry-run`) покажет, что будет выставлено на каждой карте. MANUAL 5a.
+- **`--auto-lock`** (например `--auto-lock --lock-mclock 810`): ffgs сам выбирает фиксацию ядра каждой карты.
+  **Фиксацию ядра в OC-профиле HiveOS оставьте пустой** (ffgs ставит фиксацию и сбрасывает её на выходе). Карта со
+  своим значением `--lock-cclock` сохраняет его и не перебирается. Результат — `/hive-config/ffgs/ffgs-autolock.txt`.
+  MANUAL 5e.
+- **`--api 4068`**: h-stats.sh берёт хешрейты, аптайм, шары и ватты из локального API (разбор лога остаётся запасным).
+  На смешанном NVIDIA + AMD риге `h-run.sh` даёт AMD-процессу `--api 4069` (ПОРТ+1, хост тот же), h-stats читает оба.
+  MANUAL 3d.
+- **`--temp-limit`** — для ноутбуков / мобильных GPU; десктопные риги держат температуру вентиляторами (HiveOS
+  autofan), им это не нужно. MANUAL 5f.
+- Сторож зависания GPU (MANUAL 5g) и возврат на основной пул / сторож «нет принятых шар» (MANUAL 3c, при нескольких
+  Pool URL) включены по умолчанию; `--no-watchdog`, `--failback-minutes 0`, `--noshare-minutes 0` их выключают.
+  `--no-update-check` выключает строку о новой версии в логе.
 
 ### Риги AMD
 

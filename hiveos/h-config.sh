@@ -21,4 +21,7 @@ worker=${WORKER_NAME:-rig}
 
 args="--wallet $wallet --worker $worker"
 [[ -n $url ]] && args="--pool $url $args"
-echo "$args ${CUSTOM_USER_CONFIG:-}" > "$CUSTOM_CONFIG_FILENAME"
+# Extra config arguments typed over several lines (HiveOS keeps the newlines): one line of arguments, or h-run.sh / ffgs
+# would see only the first one (0.5.2: "--auto-uv" on line 1, "--referrer ..." on line 2 -> fee 2%)
+user=$(printf '%s' "${CUSTOM_USER_CONFIG:-}" | tr '\r\n\t' '   ')
+echo "$args $user" > "$CUSTOM_CONFIG_FILENAME"
