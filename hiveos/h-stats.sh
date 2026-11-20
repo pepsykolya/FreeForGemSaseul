@@ -93,6 +93,9 @@ else
   # rig efficiency next to the version ("0.5.4 64.7 MH/W"), as FreeForGem shows TH/W: only when every process reports watts
   _ver=$CUSTOM_VERSION
   (( _w_all )) && _ver=$(awk -v v="$CUSTOM_VERSION" -v g="$_ghs_w" -v w="$_w_s" 'BEGIN{ if (w > 0 && g > 0) printf "%s %.1f MH/W", v, g * 1000 / w; else print v }')
+  # a newer release found by ffgs (update.h, 0.5.5): "0.5.4 64.7 MH/W, need update!!"
+  _new=; [[ -f $_ffgs_dir/update-available ]] && _new=$(tr -cd '0-9A-Za-z.' < "$_ffgs_dir/update-available" | head -c 20)
+  [[ -n $_new ]] && _ver="$_ver, need update!!"
   stats=$(printf '%s\n' "${_all[@]}" | sort -n -k1,1 | jq -Rn \
     --arg ver "$_ver" --arg algo "$CUSTOM_ALGO" \
     --argjson up "$_upmax" --argjson acc "$_acc_s" --argjson rej "$_rej_s" \

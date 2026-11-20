@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.5 — 2026-11-20 (SASEUL 2.3.0.0 hard fork)
+**Required update before the SASEUL 2.3.0.0 hard fork on 2026-11-30 00:00 UTC.** After the fork every older ffgs
+version builds the block header the old way: all its shares and blocks are rejected. 0.5.5 switches by itself at the
+fork (it mines exactly as 0.5.4 until then), so it can be installed now.
+
+- **Block header with the fork field** (`"fork":"Europa"`, as in the 2.3.0.0 node) for every block whose parent is at
+  or after the fork time.
+- **Decayed network difficulty**: from 6 minutes after the parent block the network target gets 4 times easier, and 4
+  times easier again every further minute. ffgs sends a hash that meets the decayed target as a block even when it is
+  below the share difficulty of the pool (Kavatar, solo proxy, saseulmine, NATS pools).
+- **Solo proxy** (`solo/sl_solo_proxy.py`): the same header and decayed target; run it with a 2.3.0.0 node.
+- Checked against vectors computed by the 2.3.0.0 node code itself (before / after the fork time, every decay step).
+- **New-version notice in HiveOS**: when a newer release is out, the version column shows `0.5.5 64.7 MH/W, need update!!`
+  (ffgs writes `update-available` next to itself; the check now reads the GitHub release feed, the REST API limit of 60
+  requests an hour per IP was used up on big farms). Nothing is downloaded or installed.
+- **Own wallet as referrer: a clear note when Kavatar SL Pool is down.** The 1% dev minute is mined on Kavatar SL Pool
+  and, while Kavatar cannot be reached (no connection or the login is refused), on your own pool, still for the dev
+  wallet and in the same 60 s window (it worked this way since 0.5.0, the log only said `fee-kavatar not reachable, using
+  fee`). Now: `dev fee: Kavatar SL Pool is unreachable, mining the fee on your pool HOST:PORT (back on Kavatar as soon as
+  it answers)`, and `dev fee: Kavatar SL Pool answers again, the fee goes to Kavatar` when it is back (also in the middle
+  of the minute). Other referrers: unchanged. MANUAL 6.
+- **Solo / own node: the dev minute goes to Kavatar SL Pool first**, then saseulpool.com, saseulmine.com, rabbitminer.cc
+  (before: saseulmine.com, then rabbitminer.cc). The log says where the fee runs while Kavatar is down (`... mining the fee on
+  saseulmine.com`). The solo referral minute follows the same order (before: Kavatar, then saseulmine.com), for any
+  referrer. Seen on a real solo rig with a foreign `--referrer`: dev fee on saseulmine.com, referral on Kavatar. MANUAL 6 / 8, `--help`.
+
 ## 0.5.4 — 2026-10-28
 **0.5.4 replaces 0.5.3, which was never released: it contains everything of 0.5.3 (below) plus the 0.5.4 features.
 Updating is recommended for everyone who uses an undervolt** (`--coffset`, `--auto-uv`, a HiveOS OC offset): 0.5.2 and

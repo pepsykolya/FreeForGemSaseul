@@ -25,11 +25,36 @@ log = logging.info
 H = lambda s: hashlib.sha256(s.encode()).hexdigest()
 
 
+# SASEUL 2.3.0.0 hard fork "Europa" (node Patch/Rule/Europa.php): for a block whose previous_blockhash is at or after the
+# cutoff time hash (2026-11-30 00:00 UTC) the header gets "fork":"Europa" and the proof of work is checked against the
+# decayed difficulty (DifficultyConsensus::decayDifficulty). Run it with a 2.3.0.0 node.
+FORK_CUTOFF = "06617317482000"
+
+
+def after_fork(prev):
+    return prev >= FORK_CUTOFF
+
+
 def header(j, ts):
     # ResourceBlockCompute::blockHeader: PHP json_encode, fixed key order, no spaces
-    return H(json.dumps({"height": j["height"], "timestamp": ts, "receipt_root": EMPTY_ROOT,
-                         "main_height": j["main_height"], "main_blockhash": j["main_blockhash"],
-                         "validator": j["validator"], "miner": j["miner"]}, separators=(",", ":")))
+    h = {"height": j["height"], "timestamp": ts, "receipt_root": EMPTY_ROOT,
+         "main_height": j["main_height"], "main_blockhash": j["main_blockhash"],
+         "validator": j["validator"], "miner": j["miner"]}
+    if after_fork(j["previous_blockhash"]):
+        h["fork"] = "Europa"
+    return H(json.dumps(h, separators=(",", ":")))
+
+
+def decayed(difficulty, ts, prev):
+    """From 6 min after the parent's time /4, then /4 every further minute (at most 128 steps), never below 1."""
+    d = int(difficulty)
+    if len(prev) != 78 or not after_fork(prev):
+        return d
+    elapsed = ts - int(prev[:14], 16)
+    if elapsed < 360_000_000:
+        return d
+    steps = min((elapsed - 360_000_000) // 60_000_000 + 1, 128)
+    return max(d // 4 ** steps, 1)
 
 
 class Proxy:
@@ -113,12 +138,13 @@ class Proxy:
         if "%014x" % ts + H(root) != bh:
             return False, "blockhash mismatch"
         r = int(root, 16)
-        if r > (1 << 256) // SHARE_DIFF:
+        block_diff = decayed(t["difficulty"], ts, t["previous_blockhash"])
+        if r > (1 << 256) // SHARE_DIFF and r > (1 << 256) // block_diff:
             return False, "low difficulty"
         self.state["shares"] += 1
         w = self.workers.setdefault(worker, [0, 0])
         w[0] += 1; w[1] = time.time()
-        if r <= (1 << 256) // int(t["difficulty"]):
+        if r <= (1 << 256) // block_diff:
             block = {"height": t["height"], "blockhash": bh, "previous_blockhash": t["previous_blockhash"], "nonce": nonce,
                      "timestamp": ts, "difficulty": str(t["difficulty"]), "main_height": t["main_height"],
                      "main_blockhash": t["main_blockhash"], "validator": t["validator"], "miner": t["miner"], "receipts": []}

@@ -678,12 +678,13 @@ The fee is **2%: two separate 60-second windows in every 100 minutes** (the firs
 
 - **1% referral** — mined for the wallet given with **`--referrer ADDRESS`** (whoever recommended ffgs to you), on your
   own pool. Without `--referrer` (or with `--referrer none`) the referral minute goes to the ffgs dev. Solo / own node:
-  the referral minute is mined on Kavatar SL Pool (your node would not pay that address).
-- **1% ffgs dev** — for the ffgs dev wallet (`a750e196…a624`) on your own pool (solo / own node: saseulmine.com, then
-  rabbitminer.cc).
+  the referral minute is mined on Kavatar SL Pool, then saseulpool.com, saseulmine.com, rabbitminer.cc (your node would not pay that address; before 0.5.5: Kavatar, then saseulmine.com).
+- **1% ffgs dev** — for the ffgs dev wallet (`a750e196…a624`) on your own pool (solo / own node: Kavatar SL Pool,
+  saseulpool.com, saseulmine.com, rabbitminer.cc, in this order; 0.5.5, before: saseulmine.com first).
 - **Your own wallet as referrer = total fee 1%**: there is no referral switch at all, and the remaining dev minute is
   mined on **Kavatar SL Pool** (`sl.kasplay.online:3333`, the pool of the ffgs authors); if Kavatar cannot be reached,
-  on your own pool. If you mine on Kavatar anyway, nothing switches pools at all.
+  on your own pool (0.5.5 logs it: `Kavatar SL Pool is unreachable, mining the fee on your pool ...`, and switches
+  back as soon as Kavatar answers). If you mine on Kavatar anyway, nothing switches pools at all.
 - Both fee connections are opened in advance and kept open, the GPUs switch only to a ready fee job and keep hashing
   for you while a fee pool connects, and each window is a hard **60 s of wall time**: if no fee pool is ready in it, that
   window is skipped. The start-up log names the referrer; the status line counts the dev (`fee …`) and referral
@@ -810,8 +811,8 @@ so the address needs a little SL first), e.g. in the Guardee wallet.
 The address in `--wallet` is only a label in the proxy log — **the reward goes to the addresses of `addresses.txt`**.
 The proxy sends 40-hex nonce jobs; ffgs switches to its solo kernel automatically (no option). Several rigs can use one
 proxy. ffgs treats a `HOST:PORT` pool list without any rabbitminer.cc host as solo: its 1% dev fee minute is then
-mined on saseulmine.com for the dev wallet (fallback rabbitminer.cc), not on your node (see 6); the rig therefore also
-needs internet access to pool.saseulmine.com or rabbitminer.cc (without it the fee window is skipped and you keep mining).
+mined on Kavatar SL Pool for the dev wallet (fallbacks: saseulpool.com, saseulmine.com, rabbitminer.cc), not on your node (see 6); the
+rig therefore also needs internet access to one of them (without it the fee window is skipped and you keep mining).
 - Windows: in `start.bat` set `POOL=NODE_IP:19310`, `WALLET=` your address, `WORKER=` a name and `EXTRA=--pass SL_TOKEN`.
 - HiveOS flight sheet: Pool URL `NODE_IP:19310`, Wallet template `%WAL%.%WORKER_NAME%`, Extra config arguments
   `--pass SL_TOKEN` (see HIVEOS.md).
@@ -1439,9 +1440,9 @@ ffgs сам выбирает фиксацию частоты ядра каждо
 
 - **1% рефереру** — майнится на кошелёк из **`--referrer АДРЕС`** (того, кто посоветовал вам ffgs), на вашем же пуле.
   Без `--referrer` (или с `--referrer none`) реферальная минута идёт разработчику. Соло / своя нода: реферальная минута
-  майнится на Kavatar SL Pool (ваша нода этому адресу не заплатит).
+  майнится на Kavatar SL Pool, затем saseulpool.com, saseulmine.com, rabbitminer.cc (ваша нода этому адресу не заплатит; до 0.5.5: Kavatar, затем saseulmine.com).
 - **1% разработчику ffgs** — на кошелёк разработчика (`a750e196…a624`) на вашем же пуле (соло / своя нода:
-  saseulmine.com, затем rabbitminer.cc).
+  Kavatar SL Pool, saseulpool.com, saseulmine.com, rabbitminer.cc по порядку; с 0.5.5, раньше первым был saseulmine.com).
 - **Свой кошелёк рефером = комиссия 1%**: переключения на реферала нет вовсе, а оставшаяся минута разработчика майнится
   на **Kavatar SL Pool** (`sl.kasplay.online:3333`, пул авторов ffgs); если Kavatar недоступен — на вашем пуле. Если вы и
   так майните на Kavatar, пул вообще не меняется.
@@ -1567,8 +1568,8 @@ SL), например в кошельке Guardee.
 Адрес в `--wallet` — только метка в логе прокси, **награда идёт на адреса из `addresses.txt`**. Прокси отдаёт задания с
 nonce 40 hex; ffgs сам переключается на соло-ядро (опций не нужно). Несколько ригов могут работать через один прокси.
 Список пулов `ХОСТ:ПОРТ` без хоста rabbitminer.cc ffgs считает соло: минута комиссии 1% тогда майнится на
-saseulmine.com на кошелёк разработчика (запасной — rabbitminer.cc), а не на вашу ноду (см. 6); поэтому ригу нужен и
-доступ в интернет к pool.saseulmine.com или rabbitminer.cc (без него окно комиссии пропускается, майнинг идёт на вас).
+Kavatar SL Pool на кошелёк разработчика (запасные — saseulpool.com, saseulmine.com, rabbitminer.cc), а не на вашу ноду (см. 6);
+поэтому ригу нужен и доступ в интернет к одному из них (без него окно комиссии пропускается, майнинг идёт на вас).
 - Windows: в `start.bat` задайте `POOL=IP_НОДЫ:19310`, `WALLET=` ваш адрес, `WORKER=` имя и `EXTRA=--pass SL_TOKEN`.
 - Полётный лист HiveOS: Pool URL `IP_НОДЫ:19310`, Wallet template `%WAL%.%WORKER_NAME%`, Extra config arguments
   `--pass SL_TOKEN` (см. HIVEOS.md).
@@ -1980,8 +1981,8 @@ ffgs 为每张 NVIDIA 显卡自行选择核心锁频：在多个锁频下挖矿�
 费用为 **2%：每 100 分钟中有两个独立的 60 秒窗口**（首次在挖矿 15 分钟后）：
 
 - **1% 给推荐人**——在您自己的矿池为 **`--referrer 地址`**（向您推荐 ffgs 的人）挖矿。未指定 `--referrer`（或 `--referrer none`）
-  时，推荐分钟归开发者。单人 / 自建节点：推荐分钟在 Kavatar SL Pool 挖矿（您的节点不会付给该地址）。
-- **1% 给 ffgs 开发者**——在您自己的矿池为开发者钱包（`a750e196…a624`）挖矿（单人 / 自建节点：saseulmine.com，然后 rabbitminer.cc）。
+  时，推荐分钟归开发者。单人 / 自建节点：推荐分钟依次在 Kavatar SL Pool、saseulpool.com、saseulmine.com、rabbitminer.cc 挖矿（您的节点不会付给该地址；0.5.5 之前：Kavatar，然后 saseulmine.com）。
+- **1% 给 ffgs 开发者**——在您自己的矿池为开发者钱包（`a750e196…a624`）挖矿（单人 / 自建节点：依次 Kavatar SL Pool、saseulpool.com、saseulmine.com、rabbitminer.cc；0.5.5 起，此前 saseulmine.com 在先）。
 - **推荐人填写自己的钱包 = 总费用 1%**：完全不切换到推荐人，剩下的开发者分钟在 **Kavatar SL Pool**（`sl.kasplay.online:3333`，
   ffgs 作者的矿池）挖矿；若无法连接 Kavatar，则在您自己的矿池。如果您本来就在 Kavatar 挖矿，则完全不切换矿池。
 - 两条费用连接提前建立并始终保持，GPU 只切换到已就绪的费用任务，费用矿池连接期间继续为您计算；每个窗口严格为
@@ -2086,8 +2087,8 @@ RTX 3070（4.6 GH/s）平均需要 8.95e14 / 4.6e9 ≈ 195,000 秒 ≈ **54 小�
 
 `--wallet` 中的地址只是代理日志里的标识——**奖励发往 `addresses.txt` 中的地址**。代理下发 40 位十六进制 nonce 的任务，ffgs
 自动切换到单人内核（无需参数）。多台矿机可共用一个代理。`主机:端口` 矿池列表中没有 rabbitminer.cc 主机时，ffgs 视为单人挖矿：
-1% 开发者费用的那一分钟改在 saseulmine.com 上为开发者钱包挖矿（备用 rabbitminer.cc），而不是在您的节点上（见第 6 节）；因此矿机
-还需要能访问 pool.saseulmine.com 或 rabbitminer.cc（否则跳过本次费用窗口，继续为您挖矿）。
+1% 开发者费用的那一分钟改在 Kavatar SL Pool 上为开发者钱包挖矿（备用 saseulpool.com、saseulmine.com、rabbitminer.cc），而不是在您的节点上（见第 6 节）；因此矿机
+还需要能访问其中之一（否则跳过本次费用窗口，继续为您挖矿）。
 - Windows：在 `start.bat` 中设置 `POOL=节点IP:19310`、`WALLET=` 您的地址、`WORKER=` 名称、`EXTRA=--pass SL_TOKEN`。
 - HiveOS 飞行表：Pool URL `节点IP:19310`，Wallet template `%WAL%.%WORKER_NAME%`，Extra config arguments `--pass SL_TOKEN`
   （见 HIVEOS.md）。

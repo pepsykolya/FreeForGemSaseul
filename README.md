@@ -1,5 +1,9 @@
 # FreeForGemSaseul (ffgs) — SASEUL (SL) GPU miner for NVIDIA and AMD
 
+> **SASEUL 2.3.0.0 hard fork on 2026-11-30 00:00 UTC: update to ffgs 0.5.5 before it.** Older versions build the
+> block header the old way after the fork, and all their shares and blocks are rejected. 0.5.5 mines exactly as
+> 0.5.4 until the fork and switches by itself (CHANGELOG).
+
 Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [saseul.com](https://saseul.com)
 (single SHA-256 over `previous_blockhash + header + nonce`).
 
@@ -36,7 +40,7 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
 
 ## Quick start (Linux)
 
-    tar xzf ffgs-0.5.4-linux-x86_64.tar.gz && cd ffgs-0.5.4
+    tar xzf ffgs-0.5.5-linux-x86_64.tar.gz && cd ffgs-0.5.5
     ./ffgs --wallet <your SASEUL address>.<worker>                        # Kavatar SL Pool (default)
     ./ffgs --pool nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931 --wallet <your SASEUL address>.<worker>
     ./ffgs --pool saseulmine --wallet <your SASEUL address>.<worker>      # saseulmine.com
@@ -47,7 +51,7 @@ Fast CUDA / OpenCL miner for **SASEUL (SL)** — the resource-chain PoW of [sase
 
 ## Quick start (Windows)
 
-Unzip `ffgs-0.5.4-windows-x64.zip`, put your address into `start.bat` (Kavatar SL Pool), `start-rabbitminer.bat`,
+Unzip `ffgs-0.5.5-windows-x64.zip`, put your address into `start.bat` (Kavatar SL Pool), `start-rabbitminer.bat`,
 `start-saseulmine.bat` or `start-saseulpool.bat` and run it (or `ffgs.exe --wallet <address>.<worker>`). Only the GPU driver is needed (NVIDIA, or AMD Adrenalin). Optional clock settings:
 `LOCK_CCLOCK` / `LOCK_MCLOCK` / `COFFSET` / `MOFFSET` / `PLIMIT` / `AUTO_UV` / `AUTO_LOCK` in the same file (the script then asks for Administrator);
 `TEMP_LIMIT` (laptops, no Administrator needed) and `API` (stats API port).
@@ -59,7 +63,7 @@ Flight sheet: Miner **Custom** → *Setup Miner Config*:
 
 | Field | Value |
 |---|---|
-| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.4/ffgs-0.5.4.tar.gz` |
+| Installation URL | `https://github.com/pepsykolya/FreeForGemSaseul/releases/download/v0.5.5/ffgs-0.5.5.tar.gz` |
 | Hash algorithm | `saseul` |
 | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
 | Pool URL | `sl.kasplay.online:3333` (Kavatar SL Pool); or `nl.rabbitminer.cc:1931,fi.rabbitminer.cc:1931`, `https://pool.saseulmine.com`, `nats://nats.saseulpool.com:4222` |
